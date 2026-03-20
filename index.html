@@ -5,22 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chat App</title>
   <style>
-    :root {
-      --bg: #efeae2;
-      --panel: #ffffff;
-      --sidebar: #f7f9fb;
-      --header: #0f8b8d;
-      --header-dark: #0a5f61;
-      --accent: #25d366;
-      --accent-dark: #128c7e;
-      --message-me: #dcf8c6;
-      --message-other: #ffffff;
-      --text: #1f2933;
-      --muted: #607080;
-      --border: #d7e0e6;
-      --shadow: 0 20px 45px rgba(15, 51, 69, 0.12);
-    }
-
     * {
       box-sizing: border-box;
     }
@@ -28,618 +12,484 @@
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(37, 211, 102, 0.18), transparent 28%),
-        linear-gradient(160deg, #e3f6eb 0%, #efeae2 42%, #dff1ef 100%);
-      color: var(--text);
+      font-family: Arial, sans-serif;
+      background: #ece5dd;
+      color: #1f2933;
     }
 
-    .app-shell {
+    .join-screen {
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 24px;
+      padding: 20px;
     }
 
-    .join-screen {
-      width: min(380px, 100%);
-      background: rgba(255, 255, 255, 0.94);
-      backdrop-filter: blur(10px);
-      border-radius: 24px;
-      padding: 32px 24px;
-      box-shadow: var(--shadow);
-    }
-
-    .join-screen h1 {
-      margin: 0 0 10px;
-      font-size: 2rem;
-    }
-
-    .join-screen p {
-      margin: 0 0 22px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-
-    .join-screen input,
-    .composer input {
-      width: 100%;
-      border: 1px solid var(--border);
+    .join-card {
+      width: min(360px, 100%);
+      background: #fff;
       border-radius: 16px;
-      padding: 14px 16px;
-      font-size: 1rem;
+      padding: 28px 22px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      text-align: center;
+    }
+
+    .join-card h1 {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+
+    .join-card p {
+      margin-top: 0;
+      margin-bottom: 18px;
+      color: #6b7280;
+    }
+
+    input,
+    button {
+      font: inherit;
+    }
+
+    .join-card input,
+    .message-box input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
       outline: none;
     }
 
-    .join-screen input:focus,
-    .composer input:focus {
-      border-color: var(--accent-dark);
-      box-shadow: 0 0 0 3px rgba(18, 140, 126, 0.12);
-    }
-
-    button {
+    .join-card button,
+    .message-box button,
+    .public-chat-button {
       border: none;
-      border-radius: 16px;
+      border-radius: 12px;
       cursor: pointer;
-      font-weight: 700;
-      transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+      font-weight: bold;
     }
 
-    button:hover {
-      transform: translateY(-1px);
-    }
-
-    .join-screen button,
-    .send-button {
-      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+    .join-card button,
+    .message-box button {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: #25d366;
       color: #fff;
     }
 
-    .join-screen button {
-      width: 100%;
-      margin-top: 14px;
-      padding: 14px 16px;
-      font-size: 1rem;
-    }
-
-    .chat-layout {
+    .chat-app {
       display: none;
-      width: min(1180px, 100%);
-      height: min(92vh, 860px);
-      background: rgba(255, 255, 255, 0.95);
-      border-radius: 28px;
-      overflow: hidden;
-      box-shadow: var(--shadow);
-      border: 1px solid rgba(255, 255, 255, 0.6);
+      min-height: 100vh;
     }
 
     .sidebar {
-      width: 320px;
-      background: var(--sidebar);
-      border-right: 1px solid var(--border);
+      width: 280px;
+      background: #fff;
+      border-right: 1px solid #dfe3e8;
       display: flex;
       flex-direction: column;
     }
 
-    .sidebar-header,
-    .chat-header {
-      padding: 20px;
-      background: linear-gradient(135deg, var(--header) 0%, var(--header-dark) 100%);
+    .sidebar-header {
+      padding: 18px 16px;
+      background: #075e54;
       color: #fff;
     }
 
-    .sidebar-header h2,
-    .chat-header h2 {
+    .sidebar-header h2 {
+      margin: 0 0 6px;
+      font-size: 20px;
+    }
+
+    .sidebar-header p {
       margin: 0;
-      font-size: 1.1rem;
+      font-size: 14px;
+      opacity: 0.9;
     }
 
-    .sidebar-header p,
-    .chat-header p {
-      margin: 6px 0 0;
-      font-size: 0.92rem;
-      opacity: 0.92;
-    }
-
-    .room-list {
-      padding: 16px;
+    .users-panel {
+      padding: 14px;
       overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      flex: 1;
     }
 
-    .room-button {
+    .public-chat-button {
       width: 100%;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      background: #e8f5e9;
+      color: #166534;
       text-align: left;
-      padding: 14px 16px;
-      background: #fff;
-      color: var(--text);
-      border: 1px solid transparent;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
     }
 
-    .room-button.active {
-      border-color: rgba(18, 140, 126, 0.25);
-      background: rgba(37, 211, 102, 0.12);
+    .user-item {
+      width: 100%;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      background: #f9fafb;
+      text-align: left;
+      cursor: pointer;
     }
 
-    .room-button small {
-      display: block;
-      color: var(--muted);
-      font-weight: 500;
-      margin-top: 4px;
-    }
-
-    .room-badge {
-      min-width: 44px;
-      padding: 6px 8px;
-      border-radius: 999px;
-      text-align: center;
-      font-size: 0.72rem;
-      font-weight: 700;
-      background: rgba(15, 139, 141, 0.12);
-      color: var(--header-dark);
+    .user-item.active,
+    .public-chat-button.active {
+      background: #dcf8c6;
+      border-color: #7acb83;
     }
 
     .chat-panel {
       flex: 1;
       display: flex;
       flex-direction: column;
-      min-width: 0;
-      background:
-        linear-gradient(rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.9)),
-        radial-gradient(circle at center, rgba(37, 211, 102, 0.08), transparent 55%);
+      background: #efeae2;
     }
 
-    .typing-indicator {
-      min-height: 24px;
-      padding: 8px 20px;
-      color: var(--muted);
-      font-size: 0.9rem;
-      font-style: italic;
+    .chat-header {
+      padding: 18px 20px;
+      background: #128c7e;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .chat-header h2 {
+      margin: 0 0 4px;
+      font-size: 20px;
+    }
+
+    .chat-header p {
+      margin: 0;
+      font-size: 14px;
+      opacity: 0.92;
     }
 
     #messages {
       list-style: none;
       margin: 0;
-      padding: 0 20px 20px;
+      padding: 18px;
       flex: 1;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
       scroll-behavior: smooth;
     }
 
-    .message-row {
-      display: flex;
-      flex-direction: column;
-      max-width: min(78%, 520px);
-      gap: 4px;
-    }
-
-    .message-row.mine {
-      align-self: flex-end;
-    }
-
-    .message-row.other {
-      align-self: flex-start;
-    }
-
-    .message-meta {
-      font-size: 0.8rem;
-      color: var(--muted);
-      padding: 0 6px;
-    }
-
-    .message-bubble {
-      padding: 12px 14px;
-      border-radius: 18px;
-      line-height: 1.5;
-      box-shadow: 0 8px 18px rgba(31, 41, 51, 0.08);
+    .message {
+      max-width: 75%;
+      padding: 10px 12px;
+      border-radius: 16px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
       word-break: break-word;
     }
 
-    .message-row.mine .message-bubble {
-      background: var(--message-me);
-      border-bottom-right-radius: 6px;
+    .message.mine {
+      align-self: flex-end;
+      background: #dcf8c6;
+      border-bottom-right-radius: 4px;
     }
 
-    .message-row.other .message-bubble {
-      background: var(--message-other);
-      border: 1px solid rgba(96, 112, 128, 0.12);
-      border-bottom-left-radius: 6px;
+    .message.other {
+      align-self: flex-start;
+      background: #fff;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.private {
+      border: 1px solid #93c5fd;
+    }
+
+    .message-name {
+      display: block;
+      font-size: 12px;
+      font-weight: bold;
+      color: #4b5563;
+      margin-bottom: 4px;
+    }
+
+    .message-text {
+      display: block;
+      font-size: 14px;
+      line-height: 1.4;
     }
 
     .message-time {
-      font-size: 0.76rem;
-      color: var(--muted);
+      display: block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #6b7280;
       text-align: right;
-      margin-top: 8px;
     }
 
-    .empty-state {
-      margin: auto;
-      width: min(420px, calc(100% - 40px));
-      text-align: center;
-      color: var(--muted);
-      background: rgba(255, 255, 255, 0.9);
-      border: 1px solid rgba(96, 112, 128, 0.12);
-      border-radius: 24px;
-      padding: 28px 24px;
-    }
-
-    .composer {
-      padding: 16px 20px 20px;
+    .message-box {
       display: flex;
-      gap: 12px;
-      align-items: center;
-      border-top: 1px solid rgba(96, 112, 128, 0.12);
-      background: rgba(255, 255, 255, 0.92);
+      gap: 10px;
+      padding: 14px;
+      background: #f8fafc;
+      border-top: 1px solid #dfe3e8;
     }
 
-    .send-button {
-      padding: 14px 22px;
-      white-space: nowrap;
+    .message-box input {
+      flex: 1;
     }
 
-    @media (max-width: 860px) {
-      .app-shell {
-        padding: 0;
+    .message-box button {
+      width: auto;
+      min-width: 100px;
+      margin-top: 0;
+    }
+
+    @media (min-width: 761px) {
+      .chat-app {
+        display: none;
       }
 
-      .chat-layout {
-        height: 100vh;
-        border-radius: 0;
+      .chat-app.active {
+        display: flex;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .chat-app.active {
+        display: block;
       }
 
       .sidebar {
         width: 100%;
-        max-height: 36vh;
+        border-right: none;
+        border-bottom: 1px solid #dfe3e8;
       }
 
-      .chat-layout {
-        flex-direction: column;
-      }
-    }
-
-    @media (max-width: 560px) {
-      .room-list {
-        padding: 12px;
-      }
-
-      .chat-header,
-      .sidebar-header,
-      .typing-indicator,
-      #messages,
-      .composer {
-        padding-left: 14px;
-        padding-right: 14px;
-      }
-
-      .composer {
+      .message-box {
         flex-direction: column;
       }
 
-      .send-button {
+      .message-box button {
         width: 100%;
       }
 
-      .message-row {
+      .message {
         max-width: 88%;
       }
     }
   </style>
 </head>
 <body>
-  <div class="app-shell">
-    <section id="joinScreen" class="join-screen">
-      <h1>Welcome to Chat App</h1>
-      <p>Join the public room, then click any online username to start a private conversation.</p>
+  <div id="joinScreen" class="join-screen">
+    <div class="join-card">
+      <h1>Join Chat</h1>
+      <p>Enter your username to start chatting.</p>
       <input id="joinUsername" type="text" placeholder="Enter your username" autocomplete="off" />
-      <button id="joinButton" type="button">Join Chat</button>
-    </section>
+      <button id="joinButton" type="button">Join</button>
+    </div>
+  </div>
 
-    <main id="chatLayout" class="chat-layout">
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <h2 id="sidebarTitle">Rooms</h2>
-          <p id="sidebarSubtitle">Choose a chat and start messaging.</p>
-        </div>
-        <div id="roomList" class="room-list"></div>
-      </aside>
+  <div id="chatApp" class="chat-app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>Online Users</h2>
+        <p>Click a user to start a private chat.</p>
+      </div>
 
-      <section class="chat-panel">
-        <div class="chat-header">
-          <h2 id="chatTitle">Public Chat</h2>
-          <p id="chatSubtitle">Everyone online can see messages here.</p>
-        </div>
+      <div class="users-panel">
+        <button id="publicChatButton" class="public-chat-button active" type="button">
+          Public Chat
+        </button>
+        <div id="onlineList"></div>
+      </div>
+    </aside>
 
-        <div id="typingIndicator" class="typing-indicator"></div>
+    <main class="chat-panel">
+      <div class="chat-header">
+        <h2 id="chatTitle">Public Chat</h2>
+        <p id="chatStatus">Messages are visible to everyone.</p>
+      </div>
 
-        <ul id="messages"></ul>
+      <ul id="messages"></ul>
 
-        <form id="messageForm" class="composer">
-          <input id="input" type="text" placeholder="Type your message..." autocomplete="off" />
-          <button class="send-button" type="submit">Send</button>
-        </form>
-      </section>
+      <form id="messageForm" class="message-box">
+        <input id="input" type="text" placeholder="Type a message..." autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
     </main>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const PUBLIC_ROOM = 'public';
-
-    let socket = null;
+    let socket;
     let username = '';
-    let currentTargetUser = PUBLIC_ROOM;
-    let isTyping = false;
-    let typingTimeout = null;
-    const typingUsers = new Set();
-    const onlineUsers = [];
-    const messageStore = {};
+    let selectedUser = '';
+    let publicMessages = [];
+    const privateMessages = {};
 
-    function formatClock(value) {
-      return new Date(value).toLocaleTimeString([], {
+    function formatTime(date) {
+      return date.toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit'
       });
     }
 
-    function getStoreKey(targetUser) {
-      return targetUser && targetUser !== PUBLIC_ROOM
-        ? [username, targetUser].sort().join('__')
-        : PUBLIC_ROOM;
+    function scrollToBottom() {
+      const messages = document.getElementById('messages');
+      messages.scrollTop = messages.scrollHeight;
     }
 
-    function getTypingKey(payload) {
-      return payload.type === 'private' ? payload.user + '__' + payload.targetUser : payload.user + '__public';
+    function getCurrentMessages() {
+      if (!selectedUser) {
+        return publicMessages;
+      }
+
+      return privateMessages[selectedUser] || [];
     }
 
-    function scrollToBottom(smooth) {
-      const messageList = document.getElementById('messages');
-      messageList.scrollTo({
-        top: messageList.scrollHeight,
-        behavior: smooth ? 'smooth' : 'auto'
+    function updateActiveChatUI() {
+      const chatTitle = document.getElementById('chatTitle');
+      const chatStatus = document.getElementById('chatStatus');
+      const publicChatButton = document.getElementById('publicChatButton');
+      const userButtons = document.querySelectorAll('.user-item');
+
+      if (!selectedUser) {
+        chatTitle.textContent = 'Public Chat';
+        chatStatus.textContent = 'Messages are visible to everyone.';
+        publicChatButton.classList.add('active');
+      } else {
+        chatTitle.textContent = 'Chatting with ' + selectedUser;
+        chatStatus.textContent = 'Private chat with ' + selectedUser;
+        publicChatButton.classList.remove('active');
+      }
+
+      userButtons.forEach(function(button) {
+        if (button.dataset.username === selectedUser) {
+          button.classList.add('active');
+        } else {
+          button.classList.remove('active');
+        }
       });
     }
 
-    function updateChatHeader() {
-      const title = document.getElementById('chatTitle');
-      const subtitle = document.getElementById('chatSubtitle');
+    function renderMessages() {
+      const messagesList = document.getElementById('messages');
+      const currentMessages = getCurrentMessages();
 
-      if (currentTargetUser === PUBLIC_ROOM) {
-        title.textContent = 'Public Chat';
-        subtitle.textContent = 'Everyone online can see messages here.';
-      } else {
-        title.textContent = currentTargetUser;
-        subtitle.textContent = 'Private conversation between you and ' + currentTargetUser + '.';
+      messagesList.innerHTML = '';
+
+      currentMessages.forEach(function(message) {
+        const item = document.createElement('li');
+        const isMine = message.user === username;
+
+        item.className = 'message ' + (isMine ? 'mine' : 'other');
+
+        if (message.private) {
+          item.className += ' private';
+        }
+
+        const name = document.createElement('span');
+        name.className = 'message-name';
+        name.textContent = isMine ? 'You' : message.user;
+
+        const text = document.createElement('span');
+        text.className = 'message-text';
+        text.textContent = message.text;
+
+        const time = document.createElement('span');
+        time.className = 'message-time';
+        time.textContent = message.time;
+
+        item.appendChild(name);
+        item.appendChild(text);
+        item.appendChild(time);
+        messagesList.appendChild(item);
+      });
+
+      scrollToBottom();
+    }
+
+    function renderUserList(users) {
+      const onlineList = document.getElementById('onlineList');
+      onlineList.innerHTML = '';
+
+      users.forEach(function(name) {
+        if (name === username) {
+          return;
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'user-item';
+        button.dataset.username = name;
+        button.textContent = name;
+
+        button.addEventListener('click', function() {
+          selectedUser = name;
+          updateActiveChatUI();
+          renderMessages();
+        });
+
+        onlineList.appendChild(button);
+      });
+
+      updateActiveChatUI();
+    }
+
+    function addPrivateMessage(message) {
+      const otherUser = message.from === username ? message.to : message.from;
+
+      if (!privateMessages[otherUser]) {
+        privateMessages[otherUser] = [];
+      }
+
+      privateMessages[otherUser].push({
+        user: message.from,
+        text: message.text,
+        time: message.time,
+        private: true
+      });
+
+      if (selectedUser === otherUser) {
+        renderMessages();
       }
     }
 
-    function renderRoomList() {
-      const roomList = document.getElementById('roomList');
-      roomList.innerHTML = '';
+    function joinChat() {
+      const joinInput = document.getElementById('joinUsername');
+      const enteredUsername = joinInput.value.trim();
 
-      const publicButton = document.createElement('button');
-      publicButton.type = 'button';
-      publicButton.className = 'room-button' + (currentTargetUser === PUBLIC_ROOM ? ' active' : '');
-      publicButton.innerHTML =
-        '<div><strong>Public Chat</strong><small>Global room for everyone</small></div>' +
-        '<span class="room-badge">All</span>';
-      publicButton.addEventListener('click', function() {
-        switchRoom(PUBLIC_ROOM);
-      });
-      roomList.appendChild(publicButton);
-
-      onlineUsers
-        .filter(function(name) {
-          return name !== username;
-        })
-        .forEach(function(name) {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'room-button' + (currentTargetUser === name ? ' active' : '');
-          button.innerHTML =
-            '<div><strong>' + escapeHtml(name) + '</strong><small>Click for private chat</small></div>' +
-            '<span class="room-badge">1:1</span>';
-          button.addEventListener('click', function() {
-            switchRoom(name);
-          });
-          roomList.appendChild(button);
-        });
-    }
-
-    function escapeHtml(value) {
-      return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function renderMessages(smoothScroll) {
-      const messageList = document.getElementById('messages');
-      const roomKey = getStoreKey(currentTargetUser);
-      const activeMessages = messageStore[roomKey] || [];
-
-      messageList.innerHTML = '';
-
-      if (activeMessages.length === 0) {
-        const emptyState = document.createElement('li');
-        emptyState.className = 'empty-state';
-        emptyState.textContent = currentTargetUser === PUBLIC_ROOM
-          ? 'No messages yet. Start the public conversation.'
-          : 'No private messages yet. Say hello to ' + currentTargetUser + '.';
-        messageList.appendChild(emptyState);
+      if (!enteredUsername) {
+        alert('Please enter a username.');
+        joinInput.focus();
         return;
       }
 
-      activeMessages.forEach(function(data) {
-        const row = document.createElement('li');
-        const mine = data.user === username;
-        row.className = 'message-row ' + (mine ? 'mine' : 'other');
-
-        const meta = document.createElement('div');
-        meta.className = 'message-meta';
-        meta.textContent = mine ? 'You' : data.user;
-
-        const bubble = document.createElement('div');
-        bubble.className = 'message-bubble';
-        bubble.textContent = data.text;
-
-        const time = document.createElement('div');
-        time.className = 'message-time';
-        time.textContent = formatClock(data.timestamp);
-
-        row.appendChild(meta);
-        row.appendChild(bubble);
-        row.appendChild(time);
-        messageList.appendChild(row);
-      });
-
-      scrollToBottom(smoothScroll);
-    }
-
-    function renderTypingIndicator() {
-      const indicator = document.getElementById('typingIndicator');
-      const visibleNames = [];
-
-      typingUsers.forEach(function(key) {
-        const parts = key.split('__');
-        const user = parts[0];
-        const target = parts[1];
-
-        if (currentTargetUser === PUBLIC_ROOM && target === 'public') {
-          visibleNames.push(user);
-        }
-
-        if (currentTargetUser !== PUBLIC_ROOM && target === currentTargetUser) {
-          visibleNames.push(user);
-        }
-      });
-
-      if (visibleNames.length === 0) {
-        indicator.textContent = '';
-      } else if (visibleNames.length === 1) {
-        indicator.textContent = visibleNames[0] + ' is typing...';
-      } else {
-        indicator.textContent = 'Several people are typing...';
-      }
-    }
-
-    function stopTyping() {
-      if (!socket || !username) return;
-
-      if (isTyping) {
-        socket.emit('stop typing', { targetUser: currentTargetUser });
-        isTyping = false;
-      }
-
-      if (typingTimeout) {
-        clearTimeout(typingTimeout);
-        typingTimeout = null;
-      }
-    }
-
-    function startTyping() {
-      if (!socket || !username) return;
-
-      if (!isTyping) {
-        socket.emit('typing', { targetUser: currentTargetUser });
-        isTyping = true;
-      }
-
-      if (typingTimeout) {
-        clearTimeout(typingTimeout);
-      }
-
-      typingTimeout = setTimeout(stopTyping, 1200);
-    }
-
-    function switchRoom(targetUser) {
-      currentTargetUser = targetUser || PUBLIC_ROOM;
-      stopTyping();
-      updateChatHeader();
-      renderRoomList();
-      renderMessages(false);
-      renderTypingIndicator();
-
-      if (socket) {
-        socket.emit('load history', currentTargetUser);
-      }
-    }
-
-    function handleIncomingMessage(data) {
-      const roomKey = data.room;
-
-      if (!messageStore[roomKey]) {
-        messageStore[roomKey] = [];
-      }
-
-      messageStore[roomKey].push(data);
-
-      const isActivePublic = currentTargetUser === PUBLIC_ROOM && data.room === PUBLIC_ROOM;
-      const isActivePrivate = currentTargetUser !== PUBLIC_ROOM && data.room === getStoreKey(currentTargetUser);
-
-      if (isActivePublic || isActivePrivate) {
-        renderMessages(true);
-      }
-    }
-
-    function setupSocket() {
+      username = enteredUsername;
       socket = io();
 
-      socket.on('chat history', function(payload) {
-        messageStore[payload.room] = payload.messages || [];
-
-        if (payload.type === 'public') {
-          currentTargetUser = PUBLIC_ROOM;
-        } else if (payload.targetUser) {
-          currentTargetUser = payload.targetUser;
+      socket.on('chat history', function(history) {
+        publicMessages = Array.isArray(history) ? history : [];
+        if (!selectedUser) {
+          renderMessages();
         }
-
-        updateChatHeader();
-        renderRoomList();
-        renderMessages(false);
-        renderTypingIndicator();
       });
 
-      socket.on('chat message', function(data) {
-        typingUsers.delete(data.user + '__public');
-        if (data.targetUser) {
-          typingUsers.delete(data.user + '__' + data.targetUser);
+      socket.on('chat message', function(message) {
+        publicMessages.push(message);
+        if (!selectedUser) {
+          renderMessages();
         }
-        renderTypingIndicator();
-        handleIncomingMessage(data);
+      });
+
+      socket.on('private message', function(message) {
+        addPrivateMessage(message);
       });
 
       socket.on('user list', function(users) {
-        onlineUsers.length = 0;
-        users.forEach(function(name) {
-          onlineUsers.push(name);
-        });
-        renderRoomList();
-      });
+        const stillOnline = users.indexOf(selectedUser) !== -1;
+        if (selectedUser && !stillOnline) {
+          selectedUser = '';
+        }
 
-      socket.on('typing', function(payload) {
-        if (!payload || payload.user === username) return;
-        typingUsers.add(getTypingKey(payload));
-        renderTypingIndicator();
-      });
-
-      socket.on('stop typing', function(payload) {
-        if (!payload) return;
-        typingUsers.delete(getTypingKey(payload));
-        renderTypingIndicator();
+        renderUserList(users);
+        renderMessages();
       });
 
       socket.on('chat error', function(message) {
@@ -648,42 +498,29 @@
 
       socket.on('join error', function(message) {
         alert(message);
-        document.getElementById('joinScreen').style.display = 'block';
-        document.getElementById('chatLayout').style.display = 'none';
+        socket.disconnect();
       });
-    }
 
-    function joinChat() {
-      const joinInput = document.getElementById('joinUsername');
-      const enteredName = joinInput.value.trim();
-
-      if (!enteredName) {
-        alert('Please enter a username.');
-        joinInput.focus();
-        return;
-      }
-
-      username = enteredName;
-      document.getElementById('joinScreen').style.display = 'none';
-      document.getElementById('chatLayout').style.display = 'flex';
-      document.getElementById('sidebarTitle').textContent = username + '\'s chats';
-      document.getElementById('sidebarSubtitle').textContent = 'Public room plus online private chats.';
-      document.getElementById('input').focus();
-
-      setupSocket();
       socket.emit('join', username);
+
+      document.getElementById('joinScreen').style.display = 'none';
+      document.getElementById('chatApp').classList.add('active');
+      document.getElementById('input').focus();
+      updateActiveChatUI();
     }
 
     function sendMessage() {
       const input = document.getElementById('input');
       const text = input.value.trim();
 
-      if (!text || !socket || !username) return;
+      if (!text || !socket) {
+        return;
+      }
 
-      stopTyping();
       socket.emit('chat message', {
         text: text,
-        targetUser: currentTargetUser
+        time: formatTime(new Date()),
+        targetUser: selectedUser
       });
 
       input.value = '';
@@ -699,18 +536,15 @@
       }
     });
 
+    document.getElementById('publicChatButton').addEventListener('click', function() {
+      selectedUser = '';
+      updateActiveChatUI();
+      renderMessages();
+    });
+
     document.getElementById('messageForm').addEventListener('submit', function(event) {
       event.preventDefault();
       sendMessage();
-    });
-
-    document.getElementById('input').addEventListener('input', function(event) {
-      if (!event.target.value.trim()) {
-        stopTyping();
-        return;
-      }
-
-      startTyping();
     });
   </script>
 </body>

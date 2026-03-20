@@ -1,6 +1,7 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
-const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -8,240 +9,135 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/chat-app';
-const PUBLIC_ROOM = 'public';
+const messagesFile = path.join(__dirname, 'messages.json');
 
 app.use(express.static(__dirname));
 
-const messageSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  message: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  timestamp: {
-    type: Date,
-    default: Date.now
-  },
-  room: {
-    type: String,
-    required: true,
-    index: true
+let publicMessages = [];
+const users = new Map();
+
+function loadMessages() {
+  try {
+    if (!fs.existsSync(messagesFile)) {
+      publicMessages = [];
+      return;
+    }
+
+    const fileData = fs.readFileSync(messagesFile, 'utf8');
+    if (!fileData.trim()) {
+      publicMessages = [];
+      return;
+    }
+
+    const parsedData = JSON.parse(fileData);
+    publicMessages = Array.isArray(parsedData) ? parsedData : [];
+  } catch (error) {
+    console.log('Could not read messages.json. Starting with empty public chat history.');
+    publicMessages = [];
   }
-});
-
-const Message = mongoose.model('Message', messageSchema);
-
-const onlineUsers = new Map();
-
-function normalizeUsername(value) {
-  return String(value || '').trim();
 }
 
-function getUserRoom(username) {
-  return `user:${username}`;
-}
-
-function getPrivateRoom(userA, userB) {
-  return [userA, userB].sort().join('__');
-}
-
-function buildRoomDetails(currentUser, targetUser) {
-  if (!targetUser || targetUser === PUBLIC_ROOM) {
-    return {
-      room: PUBLIC_ROOM,
-      type: 'public',
-      targetUser: null
-    };
+function saveMessages() {
+  try {
+    fs.writeFileSync(messagesFile, JSON.stringify(publicMessages, null, 2));
+  } catch (error) {
+    console.log('Could not save public messages to messages.json');
   }
-
-  return {
-    room: getPrivateRoom(currentUser, targetUser),
-    type: 'private',
-    targetUser
-  };
 }
 
-function formatMessageDocument(doc, currentUser) {
-  const isPrivate = doc.room !== PUBLIC_ROOM;
-  let targetUser = null;
+function getOnlineUsers() {
+  return Array.from(users.values())
+    .map((user) => user.username)
+    .sort((a, b) => a.localeCompare(b));
+}
 
-  if (isPrivate) {
-    const names = doc.room.split('__');
-    targetUser = names.find((name) => name !== currentUser) || null;
+function getUserByUsername(username) {
+  const cleanUsername = String(username || '').trim();
+
+  for (const user of users.values()) {
+    if (user.username === cleanUsername) {
+      return user;
+    }
   }
 
-  return {
-    id: String(doc._id),
-    user: doc.username,
-    text: doc.message,
-    timestamp: doc.timestamp,
-    room: doc.room,
-    type: isPrivate ? 'private' : 'public',
-    targetUser
-  };
+  return null;
 }
 
-function getOnlineUsersList() {
-  return Array.from(onlineUsers.keys()).sort((a, b) => a.localeCompare(b));
-}
-
-async function sendRoomHistory(socket, targetUser) {
-  if (!socket.username) return;
-
-  const roomDetails = buildRoomDetails(socket.username, normalizeUsername(targetUser));
-  const history = await Message.find({ room: roomDetails.room })
-    .sort({ timestamp: 1 })
-    .limit(100)
-    .lean();
-
-  socket.emit('chat history', {
-    room: roomDetails.room,
-    type: roomDetails.type,
-    targetUser: roomDetails.targetUser,
-    messages: history.map((item) => formatMessageDocument(item, socket.username))
-  });
-}
-
-mongoose
-  .connect(MONGODB_URI)
-  .then(() => {
-    console.log('Connected to MongoDB');
-  })
-  .catch((error) => {
-    console.error('MongoDB connection error:', error.message);
-  });
+loadMessages();
 
 io.on('connection', (socket) => {
   console.log('A user connected');
 
-  socket.on('join', async (username) => {
-    const cleanUsername = normalizeUsername(username);
+  socket.emit('chat history', publicMessages);
+  socket.emit('user list', getOnlineUsers());
+
+  socket.on('join', (username) => {
+    const cleanUsername = String(username || '').trim();
     if (!cleanUsername) return;
 
-    if (onlineUsers.has(cleanUsername)) {
+    const existingUser = getUserByUsername(cleanUsername);
+    if (existingUser && existingUser.socketId !== socket.id) {
       socket.emit('join error', 'That username is already in use. Please choose another one.');
       return;
     }
 
     socket.username = cleanUsername;
-    socket.join(getUserRoom(cleanUsername));
-    onlineUsers.set(cleanUsername, socket.id);
+    users.set(socket.id, {
+      username: cleanUsername,
+      socketId: socket.id
+    });
 
-    io.emit('user list', getOnlineUsersList());
-
-    try {
-      await sendRoomHistory(socket, PUBLIC_ROOM);
-    } catch (error) {
-      console.error('Could not load public chat history:', error.message);
-      socket.emit('chat history', {
-        room: PUBLIC_ROOM,
-        type: 'public',
-        targetUser: null,
-        messages: []
-      });
-    }
+    io.emit('user list', getOnlineUsers());
   });
 
-  socket.on('load history', async (targetUser) => {
+  socket.on('chat message', (payload) => {
     if (!socket.username) return;
 
-    try {
-      await sendRoomHistory(socket, targetUser);
-    } catch (error) {
-      console.error('Could not load room history:', error.message);
-    }
-  });
+    const text = String(payload && payload.text ? payload.text : '').trim();
+    const targetUser = String(payload && payload.targetUser ? payload.targetUser : '').trim();
 
-  socket.on('typing', ({ targetUser }) => {
-    if (!socket.username) return;
+    if (!text) return;
 
-    const cleanTarget = normalizeUsername(targetUser);
+    const messageData = {
+      user: socket.username,
+      text,
+      time: payload && payload.time ? payload.time : new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    };
 
-    if (!cleanTarget || cleanTarget === PUBLIC_ROOM) {
-      socket.broadcast.emit('typing', {
-        user: socket.username,
-        type: 'public',
-        targetUser: null
-      });
+    if (!targetUser) {
+      publicMessages.push(messageData);
+      saveMessages();
+      io.emit('chat message', messageData);
       return;
     }
 
-    io.to(getUserRoom(cleanTarget)).emit('typing', {
-      user: socket.username,
-      type: 'private',
-      targetUser: cleanTarget
-    });
-  });
+    const target = getUserByUsername(targetUser);
 
-  socket.on('stop typing', ({ targetUser }) => {
-    if (!socket.username) return;
-
-    const cleanTarget = normalizeUsername(targetUser);
-
-    if (!cleanTarget || cleanTarget === PUBLIC_ROOM) {
-      socket.broadcast.emit('stop typing', {
-        user: socket.username,
-        type: 'public',
-        targetUser: null
-      });
+    if (!target) {
+      socket.emit('chat error', 'Selected user is no longer online.');
       return;
     }
 
-    io.to(getUserRoom(cleanTarget)).emit('stop typing', {
-      user: socket.username,
-      type: 'private',
-      targetUser: cleanTarget
+    io.to(target.socketId).emit('private message', {
+      ...messageData,
+      from: socket.username,
+      to: target.username
     });
-  });
 
-  socket.on('chat message', async ({ text, targetUser }) => {
-    if (!socket.username) return;
-
-    const cleanText = String(text || '').trim();
-    if (!cleanText) return;
-
-    const roomDetails = buildRoomDetails(socket.username, normalizeUsername(targetUser));
-
-    try {
-      const newMessage = await Message.create({
-        username: socket.username,
-        message: cleanText,
-        room: roomDetails.room
-      });
-
-      const payload = formatMessageDocument(newMessage.toObject(), socket.username);
-
-      if (roomDetails.type === 'public') {
-        io.emit('chat message', payload);
-      } else if (roomDetails.targetUser) {
-        payload.targetUser = roomDetails.targetUser;
-        io.to(getUserRoom(socket.username)).emit('chat message', payload);
-        io.to(getUserRoom(roomDetails.targetUser)).emit('chat message', {
-          ...payload,
-          targetUser: socket.username
-        });
-      }
-    } catch (error) {
-      console.error('Could not save message:', error.message);
-      socket.emit('chat error', 'Message could not be saved.');
-    }
+    socket.emit('private message', {
+      ...messageData,
+      from: socket.username,
+      to: target.username
+    });
   });
 
   socket.on('disconnect', () => {
-    if (socket.username) {
-      onlineUsers.delete(socket.username);
-      io.emit('user list', getOnlineUsersList());
-      socket.broadcast.emit('stop typing', {
-        user: socket.username,
-        type: 'public',
-        targetUser: null
-      });
+    if (users.has(socket.id)) {
+      users.delete(socket.id);
+      io.emit('user list', getOnlineUsers());
     }
 
     console.log('User disconnected');
