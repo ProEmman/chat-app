@@ -16,6 +16,24 @@ app.use(express.static(__dirname));
 let publicMessages = [];
 const users = new Map();
 
+function sanitizeReply(replyTo) {
+  if (!replyTo || typeof replyTo !== 'object') {
+    return null;
+  }
+
+  const username = String(replyTo.username || '').trim();
+  const message = String(replyTo.message || '').trim();
+
+  if (!username || !message) {
+    return null;
+  }
+
+  return {
+    username,
+    message
+  };
+}
+
 function loadMessages() {
   try {
     if (!fs.existsSync(messagesFile)) {
@@ -95,6 +113,7 @@ io.on('connection', (socket) => {
 
     const text = String(payload && payload.text ? payload.text : '').trim();
     const targetUser = String(payload && payload.targetUser ? payload.targetUser : '').trim();
+    const replyTo = sanitizeReply(payload && payload.replyTo);
 
     if (!text) return;
 
@@ -104,7 +123,8 @@ io.on('connection', (socket) => {
       time: payload && payload.time ? payload.time : new Date().toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit'
-      })
+      }),
+      replyTo
     };
 
     if (!targetUser) {

@@ -182,6 +182,7 @@
       border-radius: 16px;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
       word-break: break-word;
+      cursor: pointer;
     }
 
     .message.mine {
@@ -214,12 +215,81 @@
       line-height: 1.4;
     }
 
+    .reply-quote {
+      display: block;
+      margin-bottom: 8px;
+      padding: 8px 10px;
+      border-left: 3px solid #60a5fa;
+      border-radius: 10px;
+      background: rgba(147, 197, 253, 0.18);
+    }
+
+    .reply-quote-name {
+      display: block;
+      font-size: 11px;
+      font-weight: bold;
+      color: #1d4ed8;
+      margin-bottom: 3px;
+    }
+
+    .reply-quote-text {
+      display: block;
+      font-size: 12px;
+      color: #475569;
+      padding-left: 6px;
+    }
+
     .message-time {
       display: block;
       margin-top: 6px;
       font-size: 11px;
       color: #6b7280;
       text-align: right;
+    }
+
+    .reply-preview {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #e0f2fe;
+      border-top: 1px solid #dfe3e8;
+      border-bottom: 1px solid #dfe3e8;
+    }
+
+    .reply-preview.active {
+      display: flex;
+    }
+
+    .reply-preview-text {
+      min-width: 0;
+    }
+
+    .reply-preview-label {
+      display: block;
+      font-size: 12px;
+      font-weight: bold;
+      color: #0369a1;
+      margin-bottom: 2px;
+    }
+
+    .reply-preview-message {
+      display: block;
+      font-size: 13px;
+      color: #334155;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .reply-cancel {
+      width: auto;
+      min-width: auto;
+      margin-top: 0;
+      padding: 8px 12px;
+      background: #ef4444;
+      color: #fff;
     }
 
     .message-box {
@@ -308,6 +378,14 @@
 
       <ul id="messages"></ul>
 
+      <div id="replyPreview" class="reply-preview">
+        <div class="reply-preview-text">
+          <span id="replyPreviewLabel" class="reply-preview-label"></span>
+          <span id="replyPreviewMessage" class="reply-preview-message"></span>
+        </div>
+        <button id="cancelReplyButton" class="reply-cancel" type="button">X</button>
+      </div>
+
       <form id="messageForm" class="message-box">
         <input id="input" type="text" placeholder="Type a message..." autocomplete="off" />
         <button type="submit">Send</button>
@@ -322,6 +400,7 @@
     let selectedUser = '';
     let publicMessages = [];
     const privateMessages = {};
+    let replyToMessage = null;
 
     function formatTime(date) {
       return date.toLocaleTimeString([], {
@@ -333,6 +412,15 @@
     function scrollToBottom() {
       const messages = document.getElementById('messages');
       messages.scrollTop = messages.scrollHeight;
+    }
+
+    function truncateReplyText(text) {
+      const cleanText = String(text || '').trim();
+      if (cleanText.length <= 60) {
+        return cleanText;
+      }
+
+      return cleanText.slice(0, 57) + '...';
     }
 
     function getCurrentMessages() {
@@ -368,6 +456,37 @@
       });
     }
 
+    function updateReplyPreview() {
+      const preview = document.getElementById('replyPreview');
+      const label = document.getElementById('replyPreviewLabel');
+      const message = document.getElementById('replyPreviewMessage');
+
+      if (!replyToMessage) {
+        preview.classList.remove('active');
+        label.textContent = '';
+        message.textContent = '';
+        return;
+      }
+
+      preview.classList.add('active');
+      label.textContent = 'Replying to ' + replyToMessage.username;
+      message.textContent = truncateReplyText(replyToMessage.message);
+    }
+
+    function clearReply() {
+      replyToMessage = null;
+      updateReplyPreview();
+    }
+
+    function setReply(message) {
+      replyToMessage = {
+        username: message.user,
+        message: message.text
+      };
+      updateReplyPreview();
+      document.getElementById('input').focus();
+    }
+
     function renderMessages() {
       const messagesList = document.getElementById('messages');
       const currentMessages = getCurrentMessages();
@@ -392,6 +511,23 @@
         text.className = 'message-text';
         text.textContent = message.text;
 
+        if (message.replyTo) {
+          const quote = document.createElement('div');
+          quote.className = 'reply-quote';
+
+          const quoteName = document.createElement('span');
+          quoteName.className = 'reply-quote-name';
+          quoteName.textContent = message.replyTo.username;
+
+          const quoteText = document.createElement('span');
+          quoteText.className = 'reply-quote-text';
+          quoteText.textContent = message.replyTo.message;
+
+          quote.appendChild(quoteName);
+          quote.appendChild(quoteText);
+          item.appendChild(quote);
+        }
+
         const time = document.createElement('span');
         time.className = 'message-time';
         time.textContent = message.time;
@@ -399,6 +535,9 @@
         item.appendChild(name);
         item.appendChild(text);
         item.appendChild(time);
+        item.addEventListener('click', function() {
+          setReply(message);
+        });
         messagesList.appendChild(item);
       });
 
@@ -422,6 +561,7 @@
 
         button.addEventListener('click', function() {
           selectedUser = name;
+          clearReply();
           updateActiveChatUI();
           renderMessages();
         });
@@ -443,7 +583,8 @@
         user: message.from,
         text: message.text,
         time: message.time,
-        private: true
+        private: true,
+        replyTo: message.replyTo || null
       });
 
       if (selectedUser === otherUser) {
@@ -520,10 +661,12 @@
       socket.emit('chat message', {
         text: text,
         time: formatTime(new Date()),
-        targetUser: selectedUser
+        targetUser: selectedUser,
+        replyTo: replyToMessage
       });
 
       input.value = '';
+      clearReply();
       input.focus();
     }
 
@@ -538,8 +681,13 @@
 
     document.getElementById('publicChatButton').addEventListener('click', function() {
       selectedUser = '';
+      clearReply();
       updateActiveChatUI();
       renderMessages();
+    });
+
+    document.getElementById('cancelReplyButton').addEventListener('click', function() {
+      clearReply();
     });
 
     document.getElementById('messageForm').addEventListener('submit', function(event) {
