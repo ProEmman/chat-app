@@ -1,169 +1,134 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Serve static frontend files (index.html etc.)
+app.use(express.static(path.join(__dirname)));
+
 const PORT = process.env.PORT || 3000;
-const messagesFile = path.join(__dirname, 'messages.json');
 
-app.use(express.static(__dirname));
+/*
+  In-memory stores:
+  - publicMessages: history for public chat
+  - users: map username -> socket.id for routing private messages
+*/
+const publicMessages = [];
+const users = {}; // { username: socketId }
 
-let publicMessages = [];
-const users = new Map();
-
-function sanitizeReply(replyTo) {
-  if (!replyTo || typeof replyTo !== 'object') {
-    return null;
-  }
-
-  const username = String(replyTo.username || '').trim();
-  const message = String(replyTo.message || '').trim();
-
-  if (!username || !message) {
-    return null;
-  }
-
-  return {
-    username,
-    message
-  };
-}
-
-function loadMessages() {
-  try {
-    if (!fs.existsSync(messagesFile)) {
-      publicMessages = [];
-      return;
-    }
-
-    const fileData = fs.readFileSync(messagesFile, 'utf8');
-    if (!fileData.trim()) {
-      publicMessages = [];
-      return;
-    }
-
-    const parsedData = JSON.parse(fileData);
-    publicMessages = Array.isArray(parsedData) ? parsedData : [];
-  } catch (error) {
-    console.log('Could not read messages.json. Starting with empty public chat history.');
-    publicMessages = [];
-  }
-}
-
-function saveMessages() {
-  try {
-    fs.writeFileSync(messagesFile, JSON.stringify(publicMessages, null, 2));
-  } catch (error) {
-    console.log('Could not save public messages to messages.json');
-  }
-}
-
-function getOnlineUsers() {
-  return Array.from(users.values())
-    .map((user) => user.username)
-    .sort((a, b) => a.localeCompare(b));
-}
-
-function getUserByUsername(username) {
-  const cleanUsername = String(username || '').trim();
-
-  for (const user of users.values()) {
-    if (user.username === cleanUsername) {
-      return user;
-    }
-  }
-
-  return null;
-}
-
-loadMessages();
+/*
+  Notes about reply/quote handling:
+  - The client sends `data.replyTo` when replying (shape: { username, message }).
+  - We must preserve that object on the server and include it in emitted messages.
+  - For public messages we include replyTo in the saved/broadcast message.
+  - For private messages we include replyTo and emit to both receiver and sender.
+*/
 
 io.on('connection', (socket) => {
-  console.log('A user connected');
-
-  socket.emit('chat history', publicMessages);
-  socket.emit('user list', getOnlineUsers());
-
+  // Store username on socket when a client joins
   socket.on('join', (username) => {
-    const cleanUsername = String(username || '').trim();
-    if (!cleanUsername) return;
-
-    const existingUser = getUserByUsername(cleanUsername);
-    if (existingUser && existingUser.socketId !== socket.id) {
-      socket.emit('join error', 'That username is already in use. Please choose another one.');
+    if (!username || typeof username !== 'string') {
+      socket.emit('join error', 'Invalid username');
       return;
     }
 
-    socket.username = cleanUsername;
-    users.set(socket.id, {
-      username: cleanUsername,
-      socketId: socket.id
-    });
+    username = username.trim();
 
-    io.emit('user list', getOnlineUsers());
+    // Basic duplicate username check
+    if (users[username] && users[username] !== socket.id) {
+      socket.emit('join error', 'Username is already taken');
+      return;
+    }
+
+    // IMPORTANT: Save username to socket so we can attribute messages
+    socket.username = username;
+    users[username] = socket.id;
+
+    // Send public chat history and broadcast updated user list
+    socket.emit('chat history', publicMessages);
+    io.emit('user list', Object.keys(users));
+
+    console.log(`${username} joined (id=${socket.id})`);
   });
 
-  socket.on('chat message', (payload) => {
-    if (!socket.username) return;
+  // Handle incoming chat messages (public or private)
+  socket.on('chat message', (data) => {
+    // Require that the sender has joined
+    if (!socket.username) {
+      socket.emit('chat error', 'You must join before sending messages');
+      return;
+    }
 
-    const text = String(payload && payload.text ? payload.text : '').trim();
-    const targetUser = String(payload && payload.targetUser ? payload.targetUser : '').trim();
-    const replyTo = sanitizeReply(payload && payload.replyTo);
+    if (!data || typeof data.text !== 'string' || !data.text.trim()) {
+      socket.emit('chat error', 'Message text is required');
+      return;
+    }
 
-    if (!text) return;
+    // Preserve replyTo exactly as sent by the frontend (may be null)
+    // Expected shape: { username, message }
+    const replyTo = data.replyTo || null;
 
-    const messageData = {
+    // Build message object and include replyTo (this is the key fix)
+    const message = {
       user: socket.username,
-      text,
-      time: payload && payload.time ? payload.time : new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-      }),
-      replyTo
+      text: data.text.trim(),
+      time: data.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      replyTo: replyTo // preserved for client-side rendering of quotes
     };
 
-    if (!targetUser) {
-      publicMessages.push(messageData);
-      saveMessages();
-      io.emit('chat message', messageData);
+    // If a targetUser is present, send as private message
+    const targetUser = data.targetUser && String(data.targetUser).trim();
+    if (targetUser) {
+      const targetSocketId = users[targetUser];
+
+      if (!targetSocketId) {
+        socket.emit('chat error', 'Target user is not online');
+        return;
+      }
+
+      // Emit private message to recipient with replyTo preserved
+      io.to(targetSocketId).emit('private message', {
+        ...message,
+        from: socket.username,
+        to: targetUser
+      });
+
+      // Also emit back to sender so their UI receives the same message (with replyTo)
+      socket.emit('private message', {
+        ...message,
+        from: socket.username,
+        to: targetUser
+      });
+
       return;
     }
 
-    const target = getUserByUsername(targetUser);
+    // PUBLIC message: save to history and broadcast including replyTo
+    publicMessages.push(message);
 
-    if (!target) {
-      socket.emit('chat error', 'Selected user is no longer online.');
-      return;
+    // Keep history bounded
+    if (publicMessages.length > 1000) {
+      publicMessages.shift();
     }
 
-    io.to(target.socketId).emit('private message', {
-      ...messageData,
-      from: socket.username,
-      to: target.username
-    });
-
-    socket.emit('private message', {
-      ...messageData,
-      from: socket.username,
-      to: target.username
-    });
+    // Broadcast public chat message (replyTo included)
+    io.emit('chat message', message);
   });
 
+  // Clean up on disconnect
   socket.on('disconnect', () => {
-    if (users.has(socket.id)) {
-      users.delete(socket.id);
-      io.emit('user list', getOnlineUsers());
+    if (socket.username) {
+      delete users[socket.username];
+      io.emit('user list', Object.keys(users));
+      console.log(`${socket.username} disconnected (id=${socket.id})`);
     }
-
-    console.log('User disconnected');
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });

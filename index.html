@@ -526,6 +526,18 @@
       return String(name || '?').trim().charAt(0).toUpperCase() || '?';
     }
 
+    function getMessageUsername(message) {
+      return String(
+        (message && (message.user || message.username || message.from)) || 'Unknown'
+      ).trim() || 'Unknown';
+    }
+
+    function getMessageText(message) {
+      return String(
+        (message && (message.text || message.message)) || ''
+      ).trim();
+    }
+
     function getCurrentMessages() {
       if (!selectedUser) {
         return publicMessages;
@@ -581,8 +593,8 @@
 
     function setReply(message) {
       replyToMessage = {
-        username: message.user,
-        message: message.text
+        username: getMessageUsername(message),
+        message: getMessageText(message)
       };
       updateReplyPreview();
       document.getElementById('input').focus();
@@ -606,15 +618,17 @@
 
       currentMessages.forEach(function(message) {
         const row = document.createElement('div');
-        const isMine = message.user === username;
+        const senderName = getMessageUsername(message);
+        const messageText = getMessageText(message);
+        const isMine = senderName === username;
 
         row.className = 'message-row ' + (isMine ? 'mine' : 'other');
 
         if (!isMine) {
           const avatar = document.createElement('div');
           avatar.className = 'message-avatar';
-          avatar.textContent = getAvatarLetter(message.user);
-          avatar.style.backgroundColor = getAvatarColor(message.user);
+          avatar.textContent = getAvatarLetter(senderName);
+          avatar.style.backgroundColor = getAvatarColor(senderName);
           row.appendChild(avatar);
         }
 
@@ -623,7 +637,7 @@
 
         const name = document.createElement('div');
         name.className = 'message-name';
-        name.textContent = isMine ? 'You' : message.user;
+        name.textContent = isMine ? 'You' : senderName;
 
         bubble.appendChild(name);
 
@@ -646,7 +660,7 @@
 
         const text = document.createElement('div');
         text.className = 'message-text';
-        text.textContent = message.text;
+        text.textContent = messageText;
 
         const time = document.createElement('div');
         time.className = 'message-time';
@@ -716,8 +730,8 @@
       }
 
       privateMessages[otherUser].push({
-        user: message.from,
-        text: message.text,
+        user: getMessageUsername(message),
+        text: getMessageText(message),
         time: message.time,
         private: true,
         replyTo: message.replyTo || null
