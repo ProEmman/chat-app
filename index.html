@@ -145,6 +145,8 @@
 
     .message-row {
       display: flex;
+      align-items: flex-end;
+      gap: 0.55rem;
       margin-bottom: 0.85rem;
     }
 
@@ -154,6 +156,21 @@
 
     .message-row.other {
       justify-content: flex-start;
+    }
+
+    .message-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 36px;
+      color: #fff;
+      font-size: 0.92rem;
+      font-weight: 700;
+      box-shadow: 0 3px 10px rgba(15, 23, 42, 0.15);
+      user-select: none;
     }
 
     .message-bubble {
@@ -321,6 +338,13 @@
         padding: 0.7rem 0.8rem;
       }
 
+      .message-avatar {
+        width: 32px;
+        height: 32px;
+        flex-basis: 32px;
+        font-size: 0.85rem;
+      }
+
       .message-text {
         font-size: 0.9rem;
       }
@@ -486,6 +510,22 @@
       return cleanText.slice(0, 57) + '...';
     }
 
+    function getAvatarColor(name) {
+      const text = String(name || '');
+      let hash = 0;
+
+      for (let i = 0; i < text.length; i++) {
+        hash = text.charCodeAt(i) + ((hash << 5) - hash);
+      }
+
+      const hue = Math.abs(hash) % 360;
+      return 'hsl(' + hue + ', 62%, 48%)';
+    }
+
+    function getAvatarLetter(name) {
+      return String(name || '?').trim().charAt(0).toUpperCase() || '?';
+    }
+
     function getCurrentMessages() {
       if (!selectedUser) {
         return publicMessages;
@@ -569,6 +609,14 @@
         const isMine = message.user === username;
 
         row.className = 'message-row ' + (isMine ? 'mine' : 'other');
+
+        if (!isMine) {
+          const avatar = document.createElement('div');
+          avatar.className = 'message-avatar';
+          avatar.textContent = getAvatarLetter(message.user);
+          avatar.style.backgroundColor = getAvatarColor(message.user);
+          row.appendChild(avatar);
+        }
 
         const bubble = document.createElement('div');
         bubble.className = 'message-bubble ' + (message.private ? 'private' : '');
