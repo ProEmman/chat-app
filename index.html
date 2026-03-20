@@ -12,44 +12,40 @@
     :root {
       --app-bg: #e5ddd5;
       --header-bg: #0f766e;
-      --header-subtle: #0b5d57;
+      --header-bg-dark: #0b5d57;
+      --panel-bg: rgba(255, 255, 255, 0.94);
       --mine-bg: #dcf8c6;
       --other-bg: #ffffff;
       --reply-bg: rgba(59, 130, 246, 0.14);
       --reply-border: #60a5fa;
-      --panel-bg: rgba(255, 255, 255, 0.94);
       --soft-border: rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
     }
 
     html,
     body {
+      width: 100%;
       height: 100%;
+      margin: 0;
       overflow: hidden;
     }
 
     body {
-      margin: 0;
       font-family: Arial, sans-serif;
       background:
-        radial-gradient(circle at top, rgba(15, 118, 110, 0.14), transparent 28%),
+        radial-gradient(circle at top, rgba(15, 118, 110, 0.12), transparent 26%),
         var(--app-bg);
       color: #1f2937;
     }
 
-    .app-shell {
-      height: 100vh;
-      overflow: hidden;
-    }
-
-    .mobile-card {
-      background: var(--panel-bg);
-      backdrop-filter: blur(10px);
-    }
-
     .join-screen {
-      height: 100vh;
+      min-height: 100vh;
+      min-height: 100dvh;
       background:
-        linear-gradient(180deg, rgba(15, 118, 110, 0.96) 0, rgba(15, 118, 110, 0.92) 120px, transparent 120px),
+        linear-gradient(180deg, rgba(15, 118, 110, 0.96) 0, rgba(15, 118, 110, 0.9) 130px, transparent 130px),
         var(--app-bg);
     }
 
@@ -57,12 +53,16 @@
       width: min(420px, 100%);
       border: 0;
       border-radius: 28px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(10px);
       box-shadow: 0 24px 48px rgba(15, 23, 42, 0.16);
     }
 
     .chat-app {
       display: none;
+      width: 100%;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
       background: var(--app-bg);
     }
@@ -79,29 +79,57 @@
 
     .sidebar-panel .offcanvas-header,
     .sidebar-top {
-      background: linear-gradient(135deg, var(--header-bg), var(--header-subtle));
+      background: linear-gradient(135deg, var(--header-bg), var(--header-bg-dark));
       color: #fff;
     }
 
     .chat-main {
       min-width: 0;
+      height: 100vh;
+      height: 100dvh;
       background:
-        linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.3)),
+        linear-gradient(rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.28)),
         var(--app-bg);
     }
 
+    .mobile-frame {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+
     .chat-header {
-      background: linear-gradient(135deg, var(--header-bg), var(--header-subtle));
+      flex: 0 0 auto;
+      min-height: 64px;
+      background: linear-gradient(135deg, var(--header-bg), var(--header-bg-dark));
       color: #fff;
-      z-index: 2;
+      z-index: 3;
+    }
+
+    .chat-header-title {
+      font-size: clamp(1rem, 2.8vw, 1.1rem);
+      line-height: 1.2;
+    }
+
+    .chat-header-subtitle {
+      font-size: clamp(0.72rem, 2.2vw, 0.82rem);
+      color: rgba(255, 255, 255, 0.78);
+      line-height: 1.25;
+    }
+
+    .chat-active-label {
+      max-width: 42%;
+      font-size: clamp(0.78rem, 2.4vw, 0.92rem);
+      line-height: 1.2;
     }
 
     .messages-area {
+      flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
       scroll-behavior: smooth;
-      padding: 1rem;
+      padding: 0.9rem;
     }
 
     .messages-area::-webkit-scrollbar,
@@ -129,7 +157,7 @@
     }
 
     .message-bubble {
-      max-width: min(82%, 520px);
+      max-width: min(84%, 520px);
       border-radius: 20px;
       padding: 0.75rem 0.9rem;
       box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
@@ -159,7 +187,7 @@
     }
 
     .message-text {
-      font-size: 0.96rem;
+      font-size: 0.94rem;
       line-height: 1.45;
       white-space: pre-wrap;
     }
@@ -177,7 +205,7 @@
       border-radius: 14px;
       padding: 0.5rem 0.7rem;
       margin-bottom: 0.55rem;
-      margin-left: 0.2rem;
+      margin-left: 0.18rem;
     }
 
     .reply-quote-name {
@@ -194,6 +222,7 @@
 
     .reply-preview {
       display: none;
+      flex: 0 0 auto;
       border-top: 1px solid var(--soft-border);
       background: rgba(224, 242, 254, 0.95);
     }
@@ -209,22 +238,31 @@
     }
 
     .composer {
+      flex: 0 0 auto;
       border-top: 1px solid var(--soft-border);
-      background: rgba(248, 250, 252, 0.96);
+      background: rgba(248, 250, 252, 0.97);
       padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
     }
 
+    .composer-row {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
     .composer .form-control {
-      min-height: 52px;
+      min-height: 50px;
       border-radius: 999px;
       padding-left: 1rem;
       padding-right: 1rem;
       box-shadow: none;
+      font-size: 0.95rem;
     }
 
     .composer .btn-send {
-      min-width: 92px;
-      min-height: 52px;
+      flex: 0 0 auto;
+      min-width: 88px;
+      min-height: 50px;
       border-radius: 999px;
       font-weight: 700;
     }
@@ -265,14 +303,57 @@
       }
 
       .chat-main {
-        height: 100vh;
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 575.98px) {
+      .chat-header {
+        min-height: 60px;
+      }
+
+      .messages-area {
+        padding: 0.75rem;
+      }
+
+      .message-bubble {
+        max-width: 88%;
+        padding: 0.7rem 0.8rem;
+      }
+
+      .message-text {
+        font-size: 0.9rem;
+      }
+
+      .composer {
+        padding-top: 0.65rem;
+      }
+
+      .composer-row {
+        gap: 0.5rem;
+      }
+
+      .composer .form-control {
+        min-height: 48px;
+        font-size: 0.92rem;
+      }
+
+      .composer .btn-send {
+        min-width: 78px;
+        min-height: 48px;
+        padding-left: 1rem;
+        padding-right: 1rem;
+      }
+
+      .reply-card {
+        padding: 0.7rem !important;
       }
     }
   </style>
 </head>
 <body>
   <div id="joinScreen" class="join-screen d-flex align-items-center justify-content-center p-3">
-    <div class="card join-card mobile-card">
+    <div class="card join-card">
       <div class="card-body p-4 p-sm-5">
         <h1 class="h3 fw-bold mb-2">Join Chat</h1>
         <p class="text-secondary mb-4">Enter your username to start chatting.</p>
@@ -321,52 +402,56 @@
       </div>
     </div>
 
-    <main class="chat-main flex-grow-1 d-flex flex-column">
-      <header class="chat-header px-3 px-sm-4 py-3 shadow-sm">
-        <div class="d-flex align-items-center justify-content-between gap-3">
-          <div class="d-flex align-items-center gap-2 min-w-0">
-            <button
-              class="btn btn-light btn-sm rounded-pill d-lg-none"
-              type="button"
-              data-bs-toggle="offcanvas"
-              data-bs-target="#usersDrawer"
-              aria-controls="usersDrawer"
-            >
-              Users
-            </button>
-            <div class="min-w-0">
-              <div class="fw-bold fs-5 text-truncate">Chat App</div>
-              <div id="chatStatus" class="small text-white-50 text-truncate">Messages are visible to everyone.</div>
+    <main class="chat-main flex-grow-1">
+      <div class="container-fluid px-0 h-100">
+        <div class="mobile-frame d-flex flex-column">
+          <header class="chat-header px-3 px-sm-4 py-2 shadow-sm">
+            <div class="d-flex align-items-center justify-content-between gap-2">
+              <div class="d-flex align-items-center gap-2 min-w-0">
+                <button
+                  class="btn btn-light btn-sm rounded-pill d-lg-none flex-shrink-0"
+                  type="button"
+                  data-bs-toggle="offcanvas"
+                  data-bs-target="#usersDrawer"
+                  aria-controls="usersDrawer"
+                >
+                  Users
+                </button>
+                <div class="min-w-0">
+                  <div class="fw-bold chat-header-title text-truncate">Chat App</div>
+                  <div id="chatStatus" class="chat-header-subtitle text-truncate">Messages are visible to everyone.</div>
+                </div>
+              </div>
+              <div id="chatTitle" class="chat-active-label fw-semibold text-truncate text-end">Public Chat</div>
+            </div>
+          </header>
+
+          <section id="messages" class="messages-area"></section>
+
+          <div id="replyPreview" class="reply-preview px-3 px-sm-4 py-2">
+            <div class="reply-card d-flex align-items-start justify-content-between gap-3 p-3">
+              <div class="min-w-0">
+                <div id="replyPreviewLabel" class="small fw-bold text-info-emphasis"></div>
+                <div id="replyPreviewMessage" class="small text-secondary text-truncate"></div>
+              </div>
+              <button id="cancelReplyButton" class="btn btn-danger btn-sm rounded-pill flex-shrink-0" type="button">X</button>
             </div>
           </div>
-          <div id="chatTitle" class="fw-semibold text-truncate">Public Chat</div>
-        </div>
-      </header>
 
-      <section id="messages" class="messages-area flex-grow-1"></section>
-
-      <div id="replyPreview" class="reply-preview px-3 px-sm-4 py-2">
-        <div class="reply-card d-flex align-items-start justify-content-between gap-3 p-3">
-          <div class="min-w-0">
-            <div id="replyPreviewLabel" class="small fw-bold text-info-emphasis"></div>
-            <div id="replyPreviewMessage" class="small text-secondary text-truncate"></div>
-          </div>
-          <button id="cancelReplyButton" class="btn btn-danger btn-sm rounded-pill flex-shrink-0" type="button">X</button>
+          <form id="messageForm" class="composer px-3 px-sm-4 py-3">
+            <div class="composer-row">
+              <input
+                id="input"
+                type="text"
+                class="form-control"
+                placeholder="Type a message..."
+                autocomplete="off"
+              />
+              <button type="submit" class="btn btn-success btn-send px-4">Send</button>
+            </div>
+          </form>
         </div>
       </div>
-
-      <form id="messageForm" class="composer px-3 px-sm-4 py-3">
-        <div class="d-flex align-items-center gap-2 gap-sm-3">
-          <input
-            id="input"
-            type="text"
-            class="form-control"
-            placeholder="Type a message..."
-            autocomplete="off"
-          />
-          <button type="submit" class="btn btn-success btn-send px-4">Send</button>
-        </div>
-      </form>
     </main>
   </div>
 
