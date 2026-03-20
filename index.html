@@ -517,14 +517,16 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    let socket;
+    // Create socket once so reconnects reuse the same socket and handlers
+    const socket = io(); // reconnection enabled by default
+
     let username = '';
     let selectedUser = '';
     let publicMessages = [];
     const privateMessages = {};
     let replyToMessage = null;
 
-    // new: base64 image data for pending send (cleared after send)
+    // base64 image data for pending send (cleared after send)
     let pendingImageBase64 = null;
 
     function formatTime(date) {
@@ -541,21 +543,16 @@
 
     function truncateReplyText(text) {
       const cleanText = String(text || '').trim();
-      if (cleanText.length <= 60) {
-        return cleanText;
-      }
-
+      if (cleanText.length <= 60) return cleanText;
       return cleanText.slice(0, 57) + '...';
     }
 
     function getAvatarColor(name) {
       const text = String(name || '');
       let hash = 0;
-
       for (let i = 0; i < text.length; i++) {
         hash = text.charCodeAt(i) + ((hash << 5) - hash);
       }
-
       const hue = Math.abs(hash) % 360;
       return 'hsl(' + hue + ', 62%, 48%)';
     }
@@ -565,22 +562,15 @@
     }
 
     function getMessageUsername(message) {
-      return String(
-        (message && (message.user || message.username || message.from)) || 'Unknown'
-      ).trim() || 'Unknown';
+      return String((message && (message.user || message.username || message.from)) || 'Unknown').trim() || 'Unknown';
     }
 
     function getMessageText(message) {
-      return String(
-        (message && (message.text || message.message)) || ''
-      ).trim();
+      return String((message && (message.text || message.message)) || '').trim();
     }
 
     function getCurrentMessages() {
-      if (!selectedUser) {
-        return publicMessages;
-      }
-
+      if (!selectedUser) return publicMessages;
       return privateMessages[selectedUser] || [];
     }
 
@@ -696,7 +686,7 @@
           bubble.appendChild(quote);
         }
 
-        // If there's an image, create and append it before/after text
+        // Display image if present
         if (message.image) {
           const img = document.createElement('img');
           img.src = message.image;
@@ -745,9 +735,7 @@
 
         const drawerElement = document.getElementById('usersDrawer');
         const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
-        if (drawer) {
-          drawer.hide();
-        }
+        if (drawer) drawer.hide();
       });
 
       return button;
@@ -760,10 +748,7 @@
       mobileList.innerHTML = '';
 
       users.forEach(function(name) {
-        if (name === username) {
-          return;
-        }
-
+        if (name === username) return;
         desktopList.appendChild(createUserButton(name));
         mobileList.appendChild(createUserButton(name));
       });
@@ -774,9 +759,7 @@
     function addPrivateMessage(message) {
       const otherUser = message.from === username ? message.to : message.from;
 
-      if (!privateMessages[otherUser]) {
-        privateMessages[otherUser] = [];
-      }
+      if (!privateMessages[otherUser]) privateMessages[otherUser] = [];
 
       privateMessages[otherUser].push({
         user: getMessageUsername(message),
@@ -787,15 +770,70 @@
         image: message.image || null
       });
 
-      if (selectedUser === otherUser) {
-        renderMessages();
-      }
+      if (selectedUser === otherUser) renderMessages();
     }
 
+    // ---- Socket handlers (registered once) ----
+    socket.on('chat history', function(history) {
+      publicMessages = Array.isArray(history) ? history : [];
+      if (!selectedUser) renderMessages();
+    });
+
+    socket.on('chat message', function(message) {
+      publicMessages.push(message);
+      if (!selectedUser) renderMessages();
+    });
+
+    socket.on('private message', function(message) {
+      addPrivateMessage(message);
+    });
+
+    socket.on('user list', function(usersList) {
+      const stillOnline = usersList.indexOf(selectedUser) !== -1;
+      if (selectedUser && !stillOnline) selectedUser = '';
+      renderUserList(usersList);
+      renderMessages();
+    });
+
+    socket.on('chat error', function(message) {
+      alert(message);
+    });
+
+    socket.on('join error', function(message) {
+      alert(message);
+      try { localStorage.removeItem('username'); } catch (e) {}
+      // show join UI again
+      document.getElementById('joinScreen').style.display = 'flex';
+      document.getElementById('chatApp').classList.remove('active');
+      username = '';
+    });
+
+    // When socket connects (first connect and reconnects), re-emit 'join' if we have a saved username.
+    socket.on('connect', () => {
+      try {
+        const saved = localStorage.getItem('username');
+        if (saved && !username) {
+          // if page loaded and saved username exists, auto-join on connect
+          username = saved;
+          socket.emit('join', username);
+          document.getElementById('joinScreen').style.display = 'none';
+          document.getElementById('chatApp').classList.add('active');
+          document.getElementById('input').focus();
+          updateActiveChatUI();
+          return;
+        }
+      } catch (e) {}
+
+      // If username already set in this session, re-join after reconnection
+      if (username) {
+        socket.emit('join', username);
+      }
+    });
+
+    // ---- UI behavior ----
     function joinChat() {
       const joinInput = document.getElementById('joinUsername');
       const enteredUsername = joinInput.value.trim();
-
       if (!enteredUsername) {
         alert('Please enter a username.');
         joinInput.focus();
@@ -803,48 +841,11 @@
       }
 
       username = enteredUsername;
-      socket = io();
 
-      // Save username to localStorage for better mobile behavior (optional)
+      // Persist username so returning users rejoin automatically
       try { localStorage.setItem('username', username); } catch (e) {}
 
-      socket.on('chat history', function(history) {
-        publicMessages = Array.isArray(history) ? history : [];
-        if (!selectedUser) {
-          renderMessages();
-        }
-      });
-
-      socket.on('chat message', function(message) {
-        publicMessages.push(message);
-        if (!selectedUser) {
-          renderMessages();
-        }
-      });
-
-      socket.on('private message', function(message) {
-        addPrivateMessage(message);
-      });
-
-      socket.on('user list', function(users) {
-        const stillOnline = users.indexOf(selectedUser) !== -1;
-        if (selectedUser && !stillOnline) {
-          selectedUser = '';
-        }
-
-        renderUserList(users);
-        renderMessages();
-      });
-
-      socket.on('chat error', function(message) {
-        alert(message);
-      });
-
-      socket.on('join error', function(message) {
-        alert(message);
-        socket.disconnect();
-      });
-
+      // Emit join; socket is already connected or will reconnect and emit again on connect
       socket.emit('join', username);
 
       document.getElementById('joinScreen').style.display = 'none';
@@ -853,7 +854,7 @@
       updateActiveChatUI();
     }
 
-    // Handle image selection: read as base64 and store into pendingImageBase64
+    // Image selection
     document.getElementById('imageButton').addEventListener('click', function() {
       document.getElementById('imageInput').click();
     });
@@ -861,14 +862,12 @@
     document.getElementById('imageInput').addEventListener('change', function(event) {
       const file = event.target.files && event.target.files[0];
       const preview = document.getElementById('imagePreview');
-
       if (!file) {
         pendingImageBase64 = null;
         preview.style.display = 'none';
         preview.src = '';
         return;
       }
-
       const reader = new FileReader();
       reader.onload = function(e) {
         pendingImageBase64 = e.target.result; // base64 data URL
@@ -882,14 +881,9 @@
       const input = document.getElementById('input');
       const text = input.value.trim();
 
-      // If nothing to send (no text and no image), do nothing
-      if (!text && !pendingImageBase64) {
-        return;
-      }
-
+      if (!text && !pendingImageBase64) return;
       if (!socket) return;
 
-      // send text + image (image may be null)
       socket.emit('chat message', {
         text: text,
         image: pendingImageBase64 || null,
@@ -900,7 +894,6 @@
 
       // Clear composer
       input.value = '';
-      // Clear image preview & pending image
       pendingImageBase64 = null;
       const preview = document.getElementById('imagePreview');
       preview.src = '';
@@ -919,9 +912,7 @@
 
       const drawerElement = document.getElementById('usersDrawer');
       const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
-      if (drawer) {
-        drawer.hide();
-      }
+      if (drawer) drawer.hide();
     }
 
     document.getElementById('joinButton').addEventListener('click', joinChat);
@@ -945,14 +936,17 @@
       sendMessage();
     });
 
-    // Optionally auto-join if username saved from previous session
+    // On initial page load, if a username exists in localStorage, pre-fill and set session username.
     (function tryAutoJoin() {
       try {
         const saved = localStorage.getItem('username');
         if (saved) {
           document.getElementById('joinUsername').value = saved;
-          // Delay to allow UI paint
-          setTimeout(() => joinChat(), 120);
+          // Show chat UI immediately; actual join will happen when socket connects (connect handler)
+          document.getElementById('joinScreen').style.display = 'none';
+          document.getElementById('chatApp').classList.add('active');
+          username = saved;
+          updateActiveChatUI();
         }
       } catch (e) {}
     })();
