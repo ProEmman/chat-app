@@ -264,7 +264,7 @@
     .composer-row {
       display: flex;
       align-items: center;
-      gap: 0.65rem;
+      gap: 0.5rem;
     }
 
     .composer .form-control {
@@ -274,6 +274,7 @@
       padding-right: 1rem;
       box-shadow: none;
       font-size: 0.95rem;
+      flex: 1 1 auto;
     }
 
     .composer .btn-send {
@@ -282,6 +283,29 @@
       min-height: 50px;
       border-radius: 999px;
       font-weight: 700;
+    }
+
+    .image-button {
+      flex: 0 0 auto;
+      min-width: 44px;
+      min-height: 44px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--soft-border);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      cursor: pointer;
+    }
+
+    .image-preview {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      object-fit: cover;
+      border: 1px solid var(--soft-border);
+      display: none;
     }
 
     .users-list {
@@ -371,6 +395,11 @@
 
       .reply-card {
         padding: 0.7rem !important;
+      }
+
+      .image-preview {
+        width: 40px;
+        height: 40px;
       }
     }
   </style>
@@ -471,6 +500,12 @@
                 placeholder="Type a message..."
                 autocomplete="off"
               />
+
+              <!-- Image button + hidden file input + small preview -->
+              <button type="button" id="imageButton" class="image-button" title="Attach image">📷</button>
+              <input type="file" id="imageInput" accept="image/*" hidden />
+              <img id="imagePreview" class="image-preview" alt="preview" />
+
               <button type="submit" class="btn btn-success btn-send px-4">Send</button>
             </div>
           </form>
@@ -488,6 +523,9 @@
     let publicMessages = [];
     const privateMessages = {};
     let replyToMessage = null;
+
+    // new: base64 image data for pending send (cleared after send)
+    let pendingImageBase64 = null;
 
     function formatTime(date) {
       return date.toLocaleTimeString([], {
@@ -658,6 +696,17 @@
           bubble.appendChild(quote);
         }
 
+        // If there's an image, create and append it before/after text
+        if (message.image) {
+          const img = document.createElement('img');
+          img.src = message.image;
+          img.style.maxWidth = '200px';
+          img.style.borderRadius = '10px';
+          img.style.marginTop = '5px';
+          img.alt = 'sent image';
+          bubble.appendChild(img);
+        }
+
         const text = document.createElement('div');
         text.className = 'message-text';
         text.textContent = messageText;
@@ -734,7 +783,8 @@
         text: getMessageText(message),
         time: message.time,
         private: true,
-        replyTo: message.replyTo || null
+        replyTo: message.replyTo || null,
+        image: message.image || null
       });
 
       if (selectedUser === otherUser) {
@@ -754,6 +804,9 @@
 
       username = enteredUsername;
       socket = io();
+
+      // Save username to localStorage for better mobile behavior (optional)
+      try { localStorage.setItem('username', username); } catch (e) {}
 
       socket.on('chat history', function(history) {
         publicMessages = Array.isArray(history) ? history : [];
@@ -800,22 +853,60 @@
       updateActiveChatUI();
     }
 
+    // Handle image selection: read as base64 and store into pendingImageBase64
+    document.getElementById('imageButton').addEventListener('click', function() {
+      document.getElementById('imageInput').click();
+    });
+
+    document.getElementById('imageInput').addEventListener('change', function(event) {
+      const file = event.target.files && event.target.files[0];
+      const preview = document.getElementById('imagePreview');
+
+      if (!file) {
+        pendingImageBase64 = null;
+        preview.style.display = 'none';
+        preview.src = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        pendingImageBase64 = e.target.result; // base64 data URL
+        preview.src = pendingImageBase64;
+        preview.style.display = 'inline-block';
+      };
+      reader.readAsDataURL(file);
+    });
+
     function sendMessage() {
       const input = document.getElementById('input');
       const text = input.value.trim();
 
-      if (!text || !socket) {
+      // If nothing to send (no text and no image), do nothing
+      if (!text && !pendingImageBase64) {
         return;
       }
 
+      if (!socket) return;
+
+      // send text + image (image may be null)
       socket.emit('chat message', {
         text: text,
+        image: pendingImageBase64 || null,
         time: formatTime(new Date()),
         targetUser: selectedUser,
         replyTo: replyToMessage
       });
 
+      // Clear composer
       input.value = '';
+      // Clear image preview & pending image
+      pendingImageBase64 = null;
+      const preview = document.getElementById('imagePreview');
+      preview.src = '';
+      preview.style.display = 'none';
+      document.getElementById('imageInput').value = '';
+
       clearReply();
       input.focus();
     }
@@ -853,6 +944,18 @@
       event.preventDefault();
       sendMessage();
     });
+
+    // Optionally auto-join if username saved from previous session
+    (function tryAutoJoin() {
+      try {
+        const saved = localStorage.getItem('username');
+        if (saved) {
+          document.getElementById('joinUsername').value = saved;
+          // Delay to allow UI paint
+          setTimeout(() => joinChat(), 120);
+        }
+      } catch (e) {}
+    })();
   </script>
 </body>
 </html>

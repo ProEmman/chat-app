@@ -21,15 +21,15 @@ const publicMessages = [];
 const users = {}; // { username: socketId }
 
 /*
-  Notes about reply/quote handling:
-  - The client sends `data.replyTo` when replying (shape: { username, message }).
-  - We must preserve that object on the server and include it in emitted messages.
-  - For public messages we include replyTo in the saved/broadcast message.
-  - For private messages we include replyTo and emit to both receiver and sender.
+  Notes:
+  - Accept `data.image` from clients (base64 data URL).
+  - Preserve `replyTo` and `image` inside the server message object.
+  - For public messages: save & broadcast message (includes image + replyTo).
+  - For private messages: emit 'private message' to both recipient and sender (includes image + replyTo).
 */
 
 io.on('connection', (socket) => {
-  // Store username on socket when a client joins
+  // When a user joins, store their username on the socket and in users map
   socket.on('join', (username) => {
     if (!username || typeof username !== 'string') {
       socket.emit('join error', 'Invalid username');
@@ -38,18 +38,20 @@ io.on('connection', (socket) => {
 
     username = username.trim();
 
-    // Basic duplicate username check
+    // Prevent duplicate usernames (basic check)
     if (users[username] && users[username] !== socket.id) {
       socket.emit('join error', 'Username is already taken');
       return;
     }
 
-    // IMPORTANT: Save username to socket so we can attribute messages
+    // Save username on the socket (required)
     socket.username = username;
     users[username] = socket.id;
 
-    // Send public chat history and broadcast updated user list
+    // Send chat history (public)
     socket.emit('chat history', publicMessages);
+
+    // Broadcast updated user list to everyone
     io.emit('user list', Object.keys(users));
 
     console.log(`${username} joined (id=${socket.id})`);
@@ -57,30 +59,33 @@ io.on('connection', (socket) => {
 
   // Handle incoming chat messages (public or private)
   socket.on('chat message', (data) => {
-    // Require that the sender has joined
+    // Validate sender
     if (!socket.username) {
       socket.emit('chat error', 'You must join before sending messages');
       return;
     }
 
-    if (!data || typeof data.text !== 'string' || !data.text.trim()) {
-      socket.emit('chat error', 'Message text is required');
+    if (!data || (typeof data.text !== 'string' && !data.image)) {
+      socket.emit('chat error', 'Message text or image is required');
       return;
     }
 
     // Preserve replyTo exactly as sent by the frontend (may be null)
-    // Expected shape: { username, message }
     const replyTo = data.replyTo || null;
 
-    // Build message object and include replyTo (this is the key fix)
+    // Preserve image (base64 data URL) if provided
+    const image = data.image || null;
+
+    // Build message object and include replyTo + image (key fix)
     const message = {
       user: socket.username,
-      text: data.text.trim(),
+      text: (typeof data.text === 'string' ? data.text.trim() : '') || '',
+      image: image, // base64 or null
       time: data.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       replyTo: replyTo // preserved for client-side rendering of quotes
     };
 
-    // If a targetUser is present, send as private message
+    // If targetUser is provided, treat as private message
     const targetUser = data.targetUser && String(data.targetUser).trim();
     if (targetUser) {
       const targetSocketId = users[targetUser];
@@ -90,14 +95,14 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Emit private message to recipient with replyTo preserved
+      // Send private message to the recipient (include image + replyTo)
       io.to(targetSocketId).emit('private message', {
         ...message,
         from: socket.username,
         to: targetUser
       });
 
-      // Also emit back to sender so their UI receives the same message (with replyTo)
+      // Also send the private message back to the sender so their UI receives the same message
       socket.emit('private message', {
         ...message,
         from: socket.username,
@@ -107,19 +112,19 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // PUBLIC message: save to history and broadcast including replyTo
+    // PUBLIC message: save to history and broadcast including replyTo & image
     publicMessages.push(message);
 
-    // Keep history bounded
+    // Optionally cap history to keep memory bounded
     if (publicMessages.length > 1000) {
       publicMessages.shift();
     }
 
-    // Broadcast public chat message (replyTo included)
+    // Broadcast public chat message (replyTo and image included)
     io.emit('chat message', message);
   });
 
-  // Clean up on disconnect
+  // When client disconnects, remove from users list and broadcast user list update
   socket.on('disconnect', () => {
     if (socket.username) {
       delete users[socket.username];
