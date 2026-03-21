@@ -1,1130 +1,267 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chat App</title>
-  <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-    rel="stylesheet"
-  />
-  <style>
-    :root {
-      --app-bg: #e5ddd5;
-      --header-bg: #0f766e;
-      --header-bg-dark: #0b5d57;
-      --panel-bg: rgba(255, 255, 255, 0.94);
-      --mine-bg: #dcf8c6;
-      --other-bg: #ffffff;
-      --reply-bg: rgba(59, 130, 246, 0.14);
-      --reply-border: #60a5fa;
-      --soft-border: rgba(15, 23, 42, 0.08);
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.log(err));
+
+const express = require('express');
+const http = require('http');
+const path = require('path');
+const { Server } = require('socket.io');
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const User = require("./models/User");
+const Message = require("./models/Message");
+
+const app = express();
+app.use(express.json());
+
+const server = http.createServer(app);
+const io = new Server(server);
+
+// Serve static frontend files
+app.use(express.static(path.join(__dirname)));
+
+const PORT = process.env.PORT || 3000;
+
+/* =========================
+   🔐 REGISTER ROUTE
+   Accept optional avatar and save it
+========================= */
+app.post("/register", async (req, res) => {
+  const { username, password, avatar } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Provide username and password' });
+  }
+  try {
+    const user = await User.findOne({ username });
+    if (user) {
+      return res.status(409).json({ message: 'Username already exists' });
+    }
+    const newUser = new User({ username, password, avatar });
+    await newUser.save();
+    res.json({ message: 'User registered successfully' });
+  } catch (e) {
+    res.status(500).json({ message: 'Registration failed' });
+  }
+});
+
+/* =========================
+   🔐 LOGIN ROUTE
+   Return avatar along with token
+========================= */
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Provide username and password' });
+  }
+  try {
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(404).json({ message: 'Invalid username or password' });
+    }
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+    const token = jwt.sign({ username: user.username }, "secretkey", { expiresIn: "24h" });
+    res.json({ token, avatar: user.avatar });
+  } catch (e) {
+    res.status(500).json({ message: 'Login error' });
+  }
+});
+
+/* =========================
+   💬 CHAT SYSTEM (MongoDB-backed)
+========================= */
+
+const users = {}; // username -> socket.id
+const lastSeen = {}; // username -> ISO timestamp when they went offline
+
+io.on('connection', (socket) => {
+  // Expect token in socket.handshake.auth.token
+  const token = socket.handshake && socket.handshake.auth && socket.handshake.auth.token;
+
+  if (!token) {
+    console.log('Socket connected without token, disconnecting:', socket.id);
+    socket.emit('auth error', 'Missing token');
+    socket.disconnect();
+    return;
+  }
+
+  // Verify token and set up handlers only on success
+  jwt.verify(token, "secretkey", async (err, decoded) => {
+    if (err || !decoded || !decoded.username) {
+      console.log('Invalid token for socket, disconnecting:', socket.id, err && err.message);
+      socket.emit('auth error', 'Invalid token');
+      socket.disconnect();
+      return;
     }
 
-    * {
-      box-sizing: border-box;
+    // Authentication succeeded
+    const username = decoded.username;
+    socket.username = username;
+
+    // Load user to get avatar and other info
+    try {
+      const userDoc = await User.findOne({ username }).lean().exec();
+      socket.avatar = (userDoc && userDoc.avatar) ? userDoc.avatar : null;
+    } catch (e) {
+      socket.avatar = null;
     }
 
-    html,
-    body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      overflow: hidden;
+    // Register/replace user mapping
+    users[username] = socket.id;
+    if (lastSeen[username]) delete lastSeen[username];
+
+    // Fetch last 50 messages from MongoDB and send to client (oldest first)
+    try {
+      let messages = await Message.find().sort({ _id: -1 }).limit(50).lean().exec();
+      messages = messages.reverse();
+      socket.emit('chat history', messages);
+    } catch (dbErr) {
+      console.error('Failed to load chat history:', dbErr);
+      socket.emit('chat history', []);
     }
 
-    body {
-      font-family: Arial, sans-serif;
-      background:
-        radial-gradient(circle at top, rgba(15, 118, 110, 0.12), transparent 26%),
-        var(--app-bg);
-      color: #1f2937;
-    }
+    // Broadcast updated user list and lastSeen
+    io.emit('user list', Object.keys(users));
+    io.emit('user last seen', lastSeen);
 
-    .join-screen {
-      min-height: 100vh;
-      min-height: 100dvh;
-      background:
-        linear-gradient(180deg, rgba(15, 118, 110, 0.96) 0, rgba(15, 118, 110, 0.9) 130px, transparent 130px),
-        var(--app-bg);
-    }
+    console.log(`${username} authenticated and connected (id=${socket.id})`);
 
-    .join-card {
-      width: min(420px, 100%);
-      border: 0;
-      border-radius: 28px;
-      background: var(--panel-bg);
-      backdrop-filter: blur(10px);
-      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.16);
-    }
-
-    .chat-app {
-      display: none;
-      width: 100%;
-      height: 100vh;
-      height: 100dvh;
-      overflow: hidden;
-      background: var(--app-bg);
-    }
-
-    .chat-app.active {
-      display: flex;
-    }
-
-    .sidebar-panel {
-      width: min(320px, 88vw);
-      background: #f8fafc;
-      border-right: 1px solid var(--soft-border);
-    }
-
-    .sidebar-panel .offcanvas-header,
-    .sidebar-top {
-      background: linear-gradient(135deg, var(--header-bg), var(--header-bg-dark));
-      color: #fff;
-    }
-
-    .chat-main {
-      min-width: 0;
-      height: 100vh;
-      height: 100dvh;
-      background:
-        linear-gradient(rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.28)),
-        var(--app-bg);
-    }
-
-    .mobile-frame {
-      height: 100%;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    .chat-header {
-      flex: 0 0 auto;
-      min-height: 64px;
-      background: linear-gradient(135deg, var(--header-bg), var(--header-bg-dark));
-      color: #fff;
-      z-index: 3;
-    }
-
-    .chat-header-title {
-      font-size: clamp(1rem, 2.8vw, 1.1rem);
-      line-height: 1.2;
-    }
-
-    .chat-header-subtitle {
-      font-size: clamp(0.72rem, 2.2vw, 0.82rem);
-      color: rgba(255, 255, 255, 0.78);
-      line-height: 1.25;
-    }
-
-    .chat-active-label {
-      max-width: 42%;
-      font-size: clamp(0.78rem, 2.4vw, 0.92rem);
-      line-height: 1.2;
-    }
-
-    .messages-area {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      scroll-behavior: smooth;
-      padding: 0.9rem;
-    }
-
-    .messages-area::-webkit-scrollbar,
-    .users-list::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    .messages-area::-webkit-scrollbar-thumb,
-    .users-list::-webkit-scrollbar-thumb {
-      background: rgba(100, 116, 139, 0.35);
-      border-radius: 999px;
-    }
-
-    .message-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 0.55rem;
-      margin-bottom: 0.85rem;
-    }
-
-    .message-row.mine {
-      justify-content: flex-end;
-    }
-
-    .message-row.other {
-      justify-content: flex-start;
-    }
-
-    .message-avatar {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 36px;
-      color: #fff;
-      font-size: 0.92rem;
-      font-weight: 700;
-      box-shadow: 0 3px 10px rgba(15, 23, 42, 0.15);
-      user-select: none;
-    }
-
-    .message-bubble {
-      max-width: min(84%, 520px);
-      border-radius: 20px;
-      padding: 0.75rem 0.9rem;
-      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
-      cursor: pointer;
-      word-break: break-word;
-    }
-
-    .message-row.mine .message-bubble {
-      background: var(--mine-bg);
-      border-bottom-right-radius: 0.45rem;
-    }
-
-    .message-row.other .message-bubble {
-      background: var(--other-bg);
-      border-bottom-left-radius: 0.45rem;
-    }
-
-    .message-bubble.private {
-      border: 1px solid rgba(96, 165, 250, 0.7);
-    }
-
-    .message-name {
-      font-size: 0.76rem;
-      font-weight: 700;
-      color: #475569;
-      margin-bottom: 0.35rem;
-    }
-
-    .message-text {
-      font-size: 0.94rem;
-      line-height: 1.45;
-      white-space: pre-wrap;
-    }
-
-    .message-time {
-      font-size: 0.72rem;
-      color: #64748b;
-      text-align: right;
-      margin-top: 0.45rem;
-    }
-
-    .reply-quote {
-      background: var(--reply-bg);
-      border-left: 4px solid var(--reply-border);
-      border-radius: 14px;
-      padding: 0.5rem 0.7rem;
-      margin-bottom: 0.55rem;
-      margin-left: 0.18rem;
-    }
-
-    .reply-quote-name {
-      font-size: 0.72rem;
-      font-weight: 700;
-      color: #1d4ed8;
-      margin-bottom: 0.15rem;
-    }
-
-    .reply-quote-text {
-      font-size: 0.8rem;
-      color: #475569;
-    }
-
-    .reply-preview {
-      display: none;
-      flex: 0 0 auto;
-      border-top: 1px solid var(--soft-border);
-      background: rgba(224, 242, 254, 0.95);
-    }
-
-    .reply-preview.active {
-      display: block;
-    }
-
-    .reply-card {
-      border-left: 4px solid #0ea5e9;
-      background: rgba(255, 255, 255, 0.72);
-      border-radius: 14px;
-    }
-
-    .composer {
-      flex: 0 0 auto;
-      border-top: 1px solid var(--soft-border);
-      background: rgba(248, 250, 252, 0.97);
-      padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
-    }
-
-    .composer-row {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    .composer .form-control {
-      min-height: 50px;
-      border-radius: 999px;
-      padding-left: 1rem;
-      padding-right: 1rem;
-      box-shadow: none;
-      font-size: 0.95rem;
-      flex: 1 1 auto;
-    }
-
-    .composer .btn-send {
-      flex: 0 0 auto;
-      min-width: 88px;
-      min-height: 50px;
-      border-radius: 999px;
-      font-weight: 700;
-    }
-
-    .image-button {
-      flex: 0 0 auto;
-      min-width: 44px;
-      min-height: 44px;
-      border-radius: 999px;
-      background: #fff;
-      border: 1px solid var(--soft-border);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.1rem;
-      cursor: pointer;
-    }
-
-    .image-preview {
-      width: 44px;
-      height: 44px;
-      border-radius: 8px;
-      object-fit: cover;
-      border: 1px solid var(--soft-border);
-      display: none;
-    }
-
-    .users-list {
-      overflow-y: auto;
-      min-height: 0;
-    }
-
-    .user-item,
-    .public-chat-button {
-      border: 1px solid var(--soft-border);
-      border-radius: 18px;
-      background: #fff;
-      transition: background-color 0.2s ease, border-color 0.2s ease;
-    }
-
-    .user-item.active,
-    .public-chat-button.active {
-      background: #dcfce7;
-      border-color: #86efac;
-    }
-
-    .empty-message {
-      max-width: 420px;
-      margin: auto;
-      background: rgba(255, 255, 255, 0.86);
-      border: 1px solid var(--soft-border);
-      border-radius: 24px;
-      padding: 1rem 1.25rem;
-      text-align: center;
-      color: #64748b;
-    }
-
-    @media (max-width: 991.98px) {
-      .chat-app.active {
-        display: block;
+    // ---- Message handlers (registered after auth) ----
+    socket.on('chat message', async (data) => {
+      if (!socket.username) {
+        socket.emit('chat error', 'You must be authenticated to send messages');
+        return;
       }
 
-      .chat-main {
-        width: 100%;
-      }
-    }
-
-    @media (max-width: 575.98px) {
-      .chat-header {
-        min-height: 60px;
+      if (!data || (typeof data.text !== 'string' && !data.image)) {
+        socket.emit('chat error', 'Message text or image is required');
+        return;
       }
 
-      .messages-area {
-        padding: 0.75rem;
-      }
+      const replyTo = data.replyTo || null;
+      const image = data.image || null;
+      const text = (typeof data.text === 'string' ? data.text.trim() : '') || '';
+      const time = data.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      .message-bubble {
-        max-width: 88%;
-        padding: 0.7rem 0.8rem;
-      }
+      const messagePayload = {
+        user: socket.username,
+        text,
+        image,
+        time,
+        replyTo,
+        avatar: socket.avatar || null,
+        seen: false
+      };
 
-      .message-avatar {
-        width: 32px;
-        height: 32px;
-        flex-basis: 32px;
-        font-size: 0.85rem;
-      }
+      const targetUser = data.targetUser && String(data.targetUser).trim();
 
-      .message-text {
-        font-size: 0.9rem;
-      }
+      if (targetUser) {
+        const targetSocketId = users[targetUser];
 
-      .composer {
-        padding-top: 0.65rem;
-      }
+        if (!targetSocketId) {
+          socket.emit('chat error', 'Target user is not online');
+          return;
+        }
 
-      .composer-row {
-        gap: 0.5rem;
-      }
-
-      .composer .form-control {
-        min-height: 48px;
-        font-size: 0.92rem;
-      }
-
-      .composer .btn-send {
-        min-width: 78px;
-        min-height: 48px;
-        padding-left: 1rem;
-        padding-right: 1rem;
-      }
-
-      .reply-card {
-        padding: 0.7rem !important;
-      }
-
-      .image-preview {
-        width: 40px;
-        height: 40px;
-      }
-    }
-  </style>
-</head>
-<body>
-  <!-- AUTH SCREEN (login / register) -->
-  <div id="authScreen" class="join-screen d-flex align-items-center justify-content-center p-3">
-    <div class="card join-card">
-      <div class="card-body p-4 p-sm-5">
-        <h1 id="authTitle" class="h3 fw-bold mb-2">Login</h1>
-        <p id="authSubtitle" class="text-secondary mb-3">Sign in or register to join the chat.</p>
-
-        <div class="mb-2">
-          <input id="authUsername" type="text" class="form-control form-control-lg mb-2" placeholder="Username" autocomplete="off" />
-          <input id="authPassword" type="password" class="form-control form-control-lg" placeholder="Password" autocomplete="off" />
-        </div>
-
-        <div class="d-grid gap-2 mt-3">
-          <button id="authPrimary" type="button" class="btn btn-success btn-lg">Login</button>
-          <button id="authSecondary" type="button" class="btn btn-outline-secondary btn-lg">Switch to Register</button>
-        </div>
-
-        <div id="authMessage" class="small text-center text-danger mt-3" style="min-height:1.2em;"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- CHAT APP (hidden until authenticated) -->
-  <div id="chatApp" class="chat-app">
-    <aside class="sidebar-panel d-none d-lg-flex flex-column">
-      <div class="sidebar-top p-3">
-        <div class="fw-bold fs-5">Online Users</div>
-        <div class="small opacity-75">Tap a user to start a private chat.</div>
-      </div>
-
-      <div class="users-list p-3 d-flex flex-column gap-2">
-        <button id="publicChatButton" class="public-chat-button btn text-start p-3 active" type="button">
-          <div class="fw-semibold">Public Chat</div>
-          <div class="small text-secondary">Messages are visible to everyone</div>
-        </button>
-        <div id="onlineList" class="d-flex flex-column gap-2"></div>
-      </div>
-    </aside>
-
-    <div class="offcanvas offcanvas-start sidebar-panel" tabindex="-1" id="usersDrawer">
-      <div class="offcanvas-header">
-        <div>
-          <div class="fw-bold fs-5">Online Users</div>
-          <div class="small opacity-75">Tap a user to start a private chat.</div>
-        </div>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-      </div>
-      <div class="offcanvas-body users-list p-3 d-flex flex-column gap-2">
-        <button id="publicChatButtonMobile" class="public-chat-button btn text-start p-3 active" type="button">
-          <div class="fw-semibold">Public Chat</div>
-          <div class="small text-secondary">Messages are visible to everyone</div>
-        </button>
-        <div id="onlineListMobile" class="d-flex flex-column gap-2"></div>
-      </div>
-    </div>
-
-    <main class="chat-main flex-grow-1">
-      <div class="container-fluid px-0 h-100">
-        <div class="mobile-frame d-flex flex-column">
-          <header class="chat-header px-3 px-sm-4 py-2 shadow-sm">
-            <div class="d-flex align-items-center justify-content-between gap-2">
-              <div class="d-flex align-items-center gap-2 min-w-0">
-                <button
-                  class="btn btn-light btn-sm rounded-pill d-lg-none flex-shrink-0"
-                  type="button"
-                  data-bs-toggle="offcanvas"
-                  data-bs-target="#usersDrawer"
-                  aria-controls="usersDrawer"
-                >
-                  Users
-                </button>
-                <div class="min-w-0">
-                  <div class="fw-bold chat-header-title text-truncate">Chat App</div>
-                  <div id="chatStatus" class="chat-header-subtitle text-truncate">Messages are visible to everyone.</div>
-                </div>
-              </div>
-              <div id="chatTitle" class="chat-active-label fw-semibold text-truncate text-end">Public Chat</div>
-            </div>
-          </header>
-
-          <section id="messages" class="messages-area"></section>
-
-          <div id="replyPreview" class="reply-preview px-3 px-sm-4 py-2">
-            <div class="reply-card d-flex align-items-start justify-content-between gap-3 p-3">
-              <div class="min-w-0">
-                <div id="replyPreviewLabel" class="small fw-bold text-info-emphasis"></div>
-                <div id="replyPreviewMessage" class="small text-secondary text-truncate"></div>
-              </div>
-              <button id="cancelReplyButton" class="btn btn-danger btn-sm rounded-pill flex-shrink-0" type="button">X</button>
-            </div>
-          </div>
-
-          <form id="messageForm" class="composer px-3 px-sm-4 py-3">
-            <div class="composer-row">
-              <input
-                id="input"
-                type="text"
-                class="form-control"
-                placeholder="Type a message..."
-                autocomplete="off"
-              />
-
-              <!-- Image button + hidden file input + small preview -->
-              <button type="button" id="imageButton" class="image-button" title="Attach image">📷</button>
-              <input type="file" id="imageInput" accept="image/*" hidden />
-              <img id="imagePreview" class="image-preview" alt="preview" />
-
-              <button type="submit" class="btn btn-success btn-send px-4">Send</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </main>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    // Helper: parse JWT payload to get username locally (used for "You" labeling)
-    function parseJwt(token) {
-      try {
-        const payload = token.split('.')[1];
-        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-        const json = decodeURIComponent(atob(base64).split('').map(c => {
-          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
-        return JSON.parse(json);
-      } catch (e) {
-        return null;
-      }
-    }
-
-    // App state
-    let socket = null;
-    let username = '';
-    let selectedUser = '';
-    let publicMessages = [];
-    const privateMessages = {};
-    let replyToMessage = null;
-    let pendingImageBase64 = null;
-
-    // Notification rate limiting
-    let lastNotificationMs = 0;
-    const NOTIFICATION_COOLDOWN_MS = 5000; // don't spam notifications
-
-    // UI refs
-    const authScreen = document.getElementById('authScreen');
-    const authTitle = document.getElementById('authTitle');
-    const authSubtitle = document.getElementById('authSubtitle');
-    const authUsername = document.getElementById('authUsername');
-    const authPassword = document.getElementById('authPassword');
-    const authPrimary = document.getElementById('authPrimary');
-    const authSecondary = document.getElementById('authSecondary');
-    const authMessage = document.getElementById('authMessage');
-
-    // Toggle state: "login" or "register"
-    let authMode = 'login';
-
-    function showAuthMessage(msg, isError = true) {
-      authMessage.textContent = msg || '';
-      authMessage.style.color = isError ? '#dc3545' : '#198754';
-      if (!msg) authMessage.style.minHeight = '1.2em';
-    }
-
-    // Request notification permission on load
-    if ('Notification' in window) {
-      try {
-        Notification.requestPermission().catch(() => {});
-      } catch (e) {}
-    }
-
-    // Helper to show a single notification (rate-limited)
-    function notifyIfNeeded(message, sender) {
-      try {
-        if (typeof Notification === 'undefined') return;
-        if (Notification.permission !== 'granted') return;
-        if (!document.hidden) return; // only when page not active
-        if (!message) return;
-        const fromUser = sender || (message.user || message.from);
-        if (!fromUser || fromUser === username) return; // don't notify for own messages
-
-        const now = Date.now();
-        if (now - lastNotificationMs < NOTIFICATION_COOLDOWN_MS) return;
-        lastNotificationMs = now;
-
-        const body = (message.text && String(message.text).trim()) ? message.text.trim() : (message.image ? 'Image received' : 'New message');
-        new Notification('New message', { body });
-      } catch (e) {
-        // silent
-      }
-    }
-
-    // Create and connect socket using token from localStorage
-    function createSocket() {
-      const token = localStorage.getItem('token');
-      if (!token) return null;
-
-      // initialize socket with token from localStorage
-      socket = io({
-        auth: { token: token }
-      });
-
-      // Register event handlers (same logic as before)
-      socket.on('connect', () => {
+        // Save private message to MongoDB (seen:false)
         try {
-          if (!username) {
-            const d = parseJwt(token);
-            if (d && d.username) username = d.username;
-          }
-        } catch (e) {}
+          const newMessage = new Message(messagePayload);
+          const saved = await newMessage.save();
+          const savedObj = saved.toObject();
 
-        // Show chat UI on successful connect
-        authScreen.style.display = 'none';
-        document.getElementById('chatApp').classList.add('active');
-        const inputEl = document.getElementById('input');
-        if (inputEl) inputEl.focus();
-        updateActiveChatUI();
-      });
+          // Emit to recipient
+          io.to(targetSocketId).emit('private message', {
+            _id: savedObj._id,
+            ...messagePayload,
+            from: socket.username,
+            to: targetUser,
+            seen: savedObj.seen
+          });
 
-      socket.on('auth error', (msg) => {
-        // token invalid/expired - remove and show auth
-        showAuthMessage(msg || 'Authentication failed');
-        try { localStorage.removeItem('token'); } catch (e) {}
-        if (socket) socket.disconnect();
-        socket = null;
-        document.getElementById('chatApp').classList.remove('active');
-        authScreen.style.display = 'flex';
-      });
-
-      socket.on('chat history', function(history) {
-        publicMessages = Array.isArray(history) ? history : [];
-        if (!selectedUser) renderMessages();
-      });
-
-      socket.on('chat message', function(message) {
-        publicMessages.push(message);
-        if (!selectedUser) renderMessages();
-        // Notify when message is from another user and page not focused
-        notifyIfNeeded(message, message.user);
-      });
-
-      socket.on('private message', function(message) {
-        addPrivateMessage(message);
-        // Notify for private messages from others
-        notifyIfNeeded(message, message.from);
-      });
-
-      socket.on('user list', function(usersList) {
-        const stillOnline = usersList.indexOf(selectedUser) !== -1;
-        if (selectedUser && !stillOnline) selectedUser = '';
-        renderUserList(usersList);
-        renderMessages();
-      });
-
-      socket.on('chat error', function(message) {
-        alert(message);
-      });
-
-      socket.on('disconnect', (reason) => {
-        // If disconnected due to auth or server-side, show auth screen
-        if (reason === 'io server disconnect' || reason === 'io client disconnect') {
-          // do not auto show auth on intentional client disconnect
+          // Emit back to sender (so sender has messageId and can show tick)
+          socket.emit('private message', {
+            _id: savedObj._id,
+            ...messagePayload,
+            from: socket.username,
+            to: targetUser,
+            seen: savedObj.seen
+          });
+        } catch (saveErr) {
+          console.error('Failed to save private message:', saveErr);
+          socket.emit('chat error', 'Failed to save message');
         }
-      });
 
-      return socket;
-    }
-
-    // AUTH actions
-    async function doRegister() {
-      const u = authUsername.value.trim();
-      const p = authPassword.value;
-      if (!u || !p) {
-        showAuthMessage('Provide username and password');
         return;
       }
-      try {
-        const res = await fetch('/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: u, password: p })
-        });
-        const json = await res.json();
-        showAuthMessage(json.message || 'Registered', false);
-      } catch (e) {
-        showAuthMessage('Registration failed');
-      }
-    }
 
-    async function doLogin() {
-      const u = authUsername.value.trim();
-      const p = authPassword.value;
-      if (!u || !p) {
-        showAuthMessage('Provide username and password');
-        return;
-      }
+      // PUBLIC message: save to MongoDB and broadcast
       try {
-        const res = await fetch('/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: u, password: p })
+        const newMessage = new Message(messagePayload);
+        const saved = await newMessage.save();
+        const savedObj = saved.toObject();
+        io.emit('chat message', {
+          _id: savedObj._id,
+          user: savedObj.user,
+          text: savedObj.text,
+          image: savedObj.image,
+          time: savedObj.time,
+          replyTo: savedObj.replyTo,
+          avatar: savedObj.avatar || null,
+          seen: savedObj.seen
         });
-        const json = await res.json();
-        if (json && json.token) {
-          localStorage.setItem('token', json.token);
-          authMessage.textContent = '';
-          // set username locally for UI (parse token)
-          const d = parseJwt(json.token);
-          if (d && d.username) username = d.username;
-          // if server returned avatar, you may want to store it (optional)
-          if (json.avatar) {
-            try { localStorage.setItem('avatar', json.avatar); } catch (e) {}
-          }
-          // init socket with token
-          createSocket();
-          // hide auth UI, show chat UI
-          authScreen.style.display = 'none';
-          document.getElementById('chatApp').classList.add('active');
-          updateActiveChatUI();
-        } else {
-          showAuthMessage(json.message || 'Login failed');
+      } catch (saveErr) {
+        console.error('Failed to save message:', saveErr);
+        socket.emit('chat error', 'Failed to save message');
+      }
+    });
+
+    // Handle message seen notifications from recipients
+    socket.on('message seen', async (messageId) => {
+      if (!messageId) return;
+      try {
+        const updated = await Message.findByIdAndUpdate(
+          messageId,
+          { seen: true },
+          { new: true }
+        ).lean().exec();
+
+        if (!updated) return;
+
+        const senderUsername = updated.user;
+        const senderSocketId = users[senderUsername];
+        if (senderSocketId) {
+          io.to(senderSocketId).emit('message seen update', String(messageId));
         }
       } catch (e) {
-        showAuthMessage('Login error');
-      }
-    }
-
-    // Toggle auth mode
-    authSecondary.addEventListener('click', function() {
-      if (authMode === 'login') {
-        authMode = 'register';
-        authTitle.textContent = 'Register';
-        authPrimary.textContent = 'Register';
-        authSecondary.textContent = 'Switch to Login';
-        authSubtitle.textContent = 'Create an account to join the chat.';
-        showAuthMessage('');
-      } else {
-        authMode = 'login';
-        authTitle.textContent = 'Login';
-        authPrimary.textContent = 'Login';
-        authSecondary.textContent = 'Switch to Register';
-        authSubtitle.textContent = 'Sign in or register to join the chat.';
-        showAuthMessage('');
+        console.error('Failed to update message seen:', e);
       }
     });
 
-    authPrimary.addEventListener('click', function() {
-      if (authMode === 'login') {
-        doLogin();
-      } else {
-        doRegister();
-      }
-    });
-
-    authPassword.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') {
-        if (authMode === 'login') doLogin(); else doRegister();
-      }
-    });
-
-    // -----------------------
-    // Existing chat code (unchanged logic) - helpers & rendering
-    // -----------------------
-
-    function formatTime(date) {
-      return date.toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    }
-
-    function scrollToBottom() {
-      const messages = document.getElementById('messages');
-      messages.scrollTop = messages.scrollHeight;
-    }
-
-    function truncateReplyText(text) {
-      const cleanText = String(text || '').trim();
-      if (cleanText.length <= 60) return cleanText;
-      return cleanText.slice(0, 57) + '...';
-    }
-
-    function getAvatarColor(name) {
-      const text = String(name || '');
-      let hash = 0;
-      for (let i = 0; i < text.length; i++) {
-        hash = text.charCodeAt(i) + ((hash << 5) - hash);
-      }
-      const hue = Math.abs(hash) % 360;
-      return 'hsl(' + hue + ', 62%, 48%)';
-    }
-
-    function getAvatarLetter(name) {
-      return String(name || '?').trim().charAt(0).toUpperCase() || '?';
-    }
-
-    function getMessageUsername(message) {
-      return String((message && (message.user || message.username || message.from)) || 'Unknown').trim() || 'Unknown';
-    }
-
-    function getMessageText(message) {
-      return String((message && (message.text || message.message)) || '').trim();
-    }
-
-    function getCurrentMessages() {
-      if (!selectedUser) return publicMessages;
-      return privateMessages[selectedUser] || [];
-    }
-
-    function updateActiveChatUI() {
-      const chatTitle = document.getElementById('chatTitle');
-      const chatStatus = document.getElementById('chatStatus');
-      const publicChatButtons = document.querySelectorAll('.public-chat-button');
-      const userButtons = document.querySelectorAll('.user-item');
-
-      if (!selectedUser) {
-        chatTitle.textContent = 'Public Chat';
-        chatStatus.textContent = 'Messages are visible to everyone.';
-      } else {
-        chatTitle.textContent = 'Chatting with ' + selectedUser;
-        chatStatus.textContent = 'Private chat with ' + selectedUser;
-      }
-
-      publicChatButtons.forEach(function(button) {
-        button.classList.toggle('active', !selectedUser);
-      });
-
-      userButtons.forEach(function(button) {
-        button.classList.toggle('active', button.dataset.username === selectedUser);
-      });
-    }
-
-    function updateReplyPreview() {
-      const preview = document.getElementById('replyPreview');
-      const label = document.getElementById('replyPreviewLabel');
-      const message = document.getElementById('replyPreviewMessage');
-
-      if (!replyToMessage) {
-        preview.classList.remove('active');
-        label.textContent = '';
-        message.textContent = '';
-        return;
-      }
-
-      preview.classList.add('active');
-      label.textContent = 'Replying to ' + replyToMessage.username;
-      message.textContent = truncateReplyText(replyToMessage.message);
-    }
-
-    function clearReply() {
-      replyToMessage = null;
-      updateReplyPreview();
-    }
-
-    function setReply(message) {
-      replyToMessage = {
-        username: getMessageUsername(message),
-        message: getMessageText(message)
-      };
-      updateReplyPreview();
-      document.getElementById('input').focus();
-    }
-
-    function renderMessages() {
-      const messagesList = document.getElementById('messages');
-      const currentMessages = getCurrentMessages();
-
-      messagesList.innerHTML = '';
-
-      if (currentMessages.length === 0) {
-        const emptyState = document.createElement('div');
-        emptyState.className = 'empty-message';
-        emptyState.textContent = selectedUser
-          ? 'No private messages yet. Start the conversation.'
-          : 'No messages yet. Start the public conversation.';
-        messagesList.appendChild(emptyState);
-        return;
-      }
-
-      currentMessages.forEach(function(message) {
-        const row = document.createElement('div');
-        const senderName = getMessageUsername(message);
-        const messageText = getMessageText(message);
-        const isMine = senderName === username;
-
-        row.className = 'message-row ' + (isMine ? 'mine' : 'other');
-
-        // Avatar element (image if available, otherwise letter avatar)
-        function createAvatarElement(name, avatarSrc) {
-          if (avatarSrc) {
-            const img = document.createElement('img');
-            img.className = 'message-avatar';
-            img.src = avatarSrc;
-            img.alt = name + ' avatar';
-            img.style.objectFit = 'cover';
-            return img;
-          } else {
-            const avatar = document.createElement('div');
-            avatar.className = 'message-avatar';
-            avatar.textContent = getAvatarLetter(name);
-            avatar.style.backgroundColor = getAvatarColor(name);
-            return avatar;
-          }
+    // Clean up on disconnect
+    socket.on('disconnect', () => {
+      if (socket.username) {
+        if (users[socket.username] === socket.id) {
+          delete users[socket.username];
         }
+        const when = new Date().toISOString();
+        lastSeen[socket.username] = when;
 
-        const avatarEl = createAvatarElement(senderName, message.avatar);
+        io.emit('user list', Object.keys(users));
+        io.emit('user last seen', { [socket.username]: when });
 
-        const bubble = document.createElement('div');
-        bubble.className = 'message-bubble ' + (message.private ? 'private' : '');
-
-        const name = document.createElement('div');
-        name.className = 'message-name';
-        name.textContent = isMine ? 'You' : senderName;
-
-        bubble.appendChild(name);
-
-        if (message.replyTo) {
-          const quote = document.createElement('div');
-          quote.className = 'reply-quote';
-
-          const quoteName = document.createElement('div');
-          quoteName.className = 'reply-quote-name';
-          quoteName.textContent = message.replyTo.username;
-
-          const quoteText = document.createElement('div');
-          quoteText.className = 'reply-quote-text';
-          quoteText.textContent = message.replyTo.message;
-
-          quote.appendChild(quoteName);
-          quote.appendChild(quoteText);
-          bubble.appendChild(quote);
-        }
-
-        // Display image if present
-        if (message.image) {
-          const img = document.createElement('img');
-          img.src = message.image;
-          img.style.maxWidth = '200px';
-          img.style.borderRadius = '10px';
-          img.style.marginTop = '5px';
-          img.alt = 'sent image';
-          bubble.appendChild(img);
-        }
-
-        const text = document.createElement('div');
-        text.className = 'message-text';
-        text.textContent = messageText;
-
-        const time = document.createElement('div');
-        time.className = 'message-time';
-        time.textContent = message.time;
-
-        bubble.appendChild(text);
-        bubble.appendChild(time);
-        bubble.addEventListener('click', function() {
-          setReply(message);
-        });
-
-        // Place avatar before bubble for others, after bubble for mine
-        if (!isMine) {
-          row.appendChild(avatarEl);
-          row.appendChild(bubble);
-        } else {
-          row.appendChild(bubble);
-          row.appendChild(avatarEl);
-        }
-
-        messagesList.appendChild(row);
-      });
-
-      scrollToBottom();
-    }
-
-    function createUserButton(name) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'user-item btn text-start p-3';
-      button.dataset.username = name;
-      button.innerHTML =
-        '<div class="fw-semibold">' + name + '</div>' +
-        '<div class="small text-secondary">Private chat</div>';
-
-      button.addEventListener('click', function() {
-        selectedUser = name;
-        clearReply();
-        updateActiveChatUI();
-        renderMessages();
-
-        const drawerElement = document.getElementById('usersDrawer');
-        const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
-        if (drawer) drawer.hide();
-      });
-
-      return button;
-    }
-
-    function renderUserList(users) {
-      const desktopList = document.getElementById('onlineList');
-      const mobileList = document.getElementById('onlineListMobile');
-      desktopList.innerHTML = '';
-      mobileList.innerHTML = '';
-
-      users.forEach(function(name) {
-        if (name === username) return;
-        desktopList.appendChild(createUserButton(name));
-        mobileList.appendChild(createUserButton(name));
-      });
-
-      updateActiveChatUI();
-    }
-
-    function addPrivateMessage(message) {
-      const otherUser = message.from === username ? message.to : message.from;
-
-      if (!privateMessages[otherUser]) privateMessages[otherUser] = [];
-
-      privateMessages[otherUser].push({
-        user: getMessageUsername(message),
-        text: getMessageText(message),
-        time: message.time,
-        private: true,
-        replyTo: message.replyTo || null,
-        image: message.image || null,
-        avatar: message.avatar || null
-      });
-
-      if (selectedUser === otherUser) renderMessages();
-    }
-
-    // Image selection
-    document.getElementById('imageButton').addEventListener('click', function() {
-      document.getElementById('imageInput').click();
-    });
-
-    document.getElementById('imageInput').addEventListener('change', function(event) {
-      const file = event.target.files && event.target.files[0];
-      const preview = document.getElementById('imagePreview');
-      if (!file) {
-        pendingImageBase64 = null;
-        preview.style.display = 'none';
-        preview.src = '';
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        pendingImageBase64 = e.target.result; // base64 data URL
-        preview.src = pendingImageBase64;
-        preview.style.display = 'inline-block';
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // Send message (uses socket variable created after login)
-    function sendMessage() {
-      const input = document.getElementById('input');
-      const text = input.value.trim();
-
-      if (!text && !pendingImageBase64) return;
-      if (!socket) {
-        alert('Not connected. Please log in.');
-        return;
-      }
-
-      socket.emit('chat message', {
-        text: text,
-        image: pendingImageBase64 || null,
-        time: formatTime(new Date()),
-        targetUser: selectedUser,
-        replyTo: replyToMessage
-      });
-
-      // Clear composer
-      input.value = '';
-      pendingImageBase64 = null;
-      const preview = document.getElementById('imagePreview');
-      preview.src = '';
-      preview.style.display = 'none';
-      document.getElementById('imageInput').value = '';
-
-      clearReply();
-      input.focus();
-    }
-
-    function switchToPublicChat() {
-      selectedUser = '';
-      clearReply();
-      updateActiveChatUI();
-      renderMessages();
-
-      const drawerElement = document.getElementById('usersDrawer');
-      const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
-      if (drawer) drawer.hide();
-    }
-
-    document.getElementById('publicChatButton').addEventListener('click', switchToPublicChat);
-    document.getElementById('publicChatButtonMobile').addEventListener('click', switchToPublicChat);
-
-    document.getElementById('cancelReplyButton').addEventListener('click', function() {
-      clearReply();
-    });
-
-    document.getElementById('messageForm').addEventListener('submit', function(event) {
-      event.preventDefault();
-      sendMessage();
-    });
-
-    // On load: if token exists try to connect automatically
-    (function autoConnectIfToken() {
-      const token = localStorage.getItem('token');
-      if (token) {
-        // pre-fill username from token for UI
-        const d = parseJwt(token);
-        if (d && d.username) username = d.username;
-        createSocket();
+        console.log(`${socket.username} disconnected (id=${socket.id})`);
       } else {
-        // show auth screen
-        authScreen.style.display = 'flex';
-        document.getElementById('chatApp').classList.remove('active');
+        console.log('Unauthenticated socket disconnected:', socket.id);
       }
-    })();
-  </script>
-</body>
-</html>
+    });
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});

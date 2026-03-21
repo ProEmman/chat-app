@@ -5,7 +5,8 @@ const messageSchema = new mongoose.Schema({
   text: { type: String, default: '' },
   image: { type: String, default: null }, // base64 data URL or image URL
   time: { type: String, default: '' },
-  replyTo: { type: Object, default: null } // shape preserved from frontend (e.g. { username, message })
+  replyTo: { type: Object, default: null }, // shape preserved from frontend (e.g. { username, message })
+  seen: { type: Boolean, default: false } // read receipt
 });
 
 module.exports = mongoose.model('Message', messageSchema);
