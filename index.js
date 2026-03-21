@@ -27,7 +27,6 @@ const PORT = process.env.PORT || 3000;
 
 /* =========================
    🔐 REGISTER ROUTE
-   Accept optional avatar and save it
 ========================= */
 app.post("/register", async (req, res) => {
   try {
@@ -56,14 +55,13 @@ app.post("/register", async (req, res) => {
     res.json({ message: "User registered successfully" });
 
   } catch (error) {
-    console.log("REGISTER ERROR:", error);
-    res.json({ message: error.message });
+    console.log(error);
+    res.json({ message: "Server error" });
   }
 });
 
 /* =========================
    🔐 LOGIN ROUTE
-   Return avatar along with token
 ========================= */
 app.post("/login", async (req, res) => {
   try {
@@ -105,12 +103,6 @@ app.post("/login", async (req, res) => {
 
 /* =========================
    💬 CHAT SYSTEM (MongoDB-backed)
-   - Clients must provide JWT in socket.handshake.auth.token
-   - We verify token, extract decoded.username and assign to socket.username
-   - Load user record to get avatar and assign to socket.avatar
-   - If token missing/invalid => disconnect socket
-   - After successful auth emit chat history (from MongoDB) and user list
-   - All message handlers are registered after auth succeeds
 ========================= */
 
 const users = {}; // username -> socket.id
@@ -150,7 +142,6 @@ io.on('connection', (socket) => {
 
     // Register/replace user mapping
     users[username] = socket.id;
-    // user is online now, clear any lastSeen
     if (lastSeen[username]) delete lastSeen[username];
 
     // Fetch last 50 messages from MongoDB and send to client (oldest first)
@@ -163,7 +154,7 @@ io.on('connection', (socket) => {
       socket.emit('chat history', []);
     }
 
-    // Broadcast updated user list (array of usernames) and lastSeen map
+    // Broadcast updated user list and lastSeen
     io.emit('user list', Object.keys(users));
     io.emit('user last seen', lastSeen);
 
@@ -192,7 +183,8 @@ io.on('connection', (socket) => {
         image,
         time,
         replyTo,
-        avatar: socket.avatar || null
+        avatar: socket.avatar || null,
+        seen: false
       };
 
       const targetUser = data.targetUser && String(data.targetUser).trim();
@@ -205,17 +197,33 @@ io.on('connection', (socket) => {
           return;
         }
 
-        io.to(targetSocketId).emit('private message', {
-          ...messagePayload,
-          from: socket.username,
-          to: targetUser
-        });
+        // Save private message to MongoDB (seen:false)
+        try {
+          const newMessage = new Message(messagePayload);
+          const saved = await newMessage.save();
+          const savedObj = saved.toObject();
 
-        socket.emit('private message', {
-          ...messagePayload,
-          from: socket.username,
-          to: targetUser
-        });
+          // Emit to recipient
+          io.to(targetSocketId).emit('private message', {
+            _id: savedObj._id,
+            ...messagePayload,
+            from: socket.username,
+            to: targetUser,
+            seen: savedObj.seen
+          });
+
+          // Emit back to sender (so sender has messageId and can show tick)
+          socket.emit('private message', {
+            _id: savedObj._id,
+            ...messagePayload,
+            from: socket.username,
+            to: targetUser,
+            seen: savedObj.seen
+          });
+        } catch (saveErr) {
+          console.error('Failed to save private message:', saveErr);
+          socket.emit('chat error', 'Failed to save message');
+        }
 
         return;
       }
@@ -224,16 +232,16 @@ io.on('connection', (socket) => {
       try {
         const newMessage = new Message(messagePayload);
         const saved = await newMessage.save();
-        // Convert to plain object for emission
         const savedObj = saved.toObject();
-        // Broadcast public chat message (replyTo, image, avatar included)
         io.emit('chat message', {
+          _id: savedObj._id,
           user: savedObj.user,
           text: savedObj.text,
           image: savedObj.image,
           time: savedObj.time,
           replyTo: savedObj.replyTo,
-          avatar: savedObj.avatar || null
+          avatar: savedObj.avatar || null,
+          seen: savedObj.seen
         });
       } catch (saveErr) {
         console.error('Failed to save message:', saveErr);
@@ -241,18 +249,37 @@ io.on('connection', (socket) => {
       }
     });
 
+    // Handle message seen notifications from recipients
+    socket.on('message seen', async (messageId) => {
+      if (!messageId) return;
+      try {
+        const updated = await Message.findByIdAndUpdate(
+          messageId,
+          { seen: true },
+          { new: true }
+        ).lean().exec();
+
+        if (!updated) return;
+
+        const senderUsername = updated.user;
+        const senderSocketId = users[senderUsername];
+        if (senderSocketId) {
+          io.to(senderSocketId).emit('message seen update', String(messageId));
+        }
+      } catch (e) {
+        console.error('Failed to update message seen:', e);
+      }
+    });
+
     // Clean up on disconnect
     socket.on('disconnect', () => {
       if (socket.username) {
-        // Only remove mapping if it still points to this socket id
         if (users[socket.username] === socket.id) {
           delete users[socket.username];
         }
-        // record last seen timestamp
         const when = new Date().toISOString();
         lastSeen[socket.username] = when;
 
-        // Broadcast updated user list and the lastSeen info
         io.emit('user list', Object.keys(users));
         io.emit('user last seen', { [socket.username]: when });
 
