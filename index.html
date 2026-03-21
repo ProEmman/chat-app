@@ -546,6 +546,10 @@
     let replyToMessage = null;
     let pendingImageBase64 = null;
 
+    // Notification rate limiting
+    let lastNotificationMs = 0;
+    const NOTIFICATION_COOLDOWN_MS = 5000; // don't spam notifications
+
     // UI refs
     const authScreen = document.getElementById('authScreen');
     const authTitle = document.getElementById('authTitle');
@@ -563,6 +567,34 @@
       authMessage.textContent = msg || '';
       authMessage.style.color = isError ? '#dc3545' : '#198754';
       if (!msg) authMessage.style.minHeight = '1.2em';
+    }
+
+    // Request notification permission on load
+    if ('Notification' in window) {
+      try {
+        Notification.requestPermission().catch(() => {});
+      } catch (e) {}
+    }
+
+    // Helper to show a single notification (rate-limited)
+    function notifyIfNeeded(message, sender) {
+      try {
+        if (typeof Notification === 'undefined') return;
+        if (Notification.permission !== 'granted') return;
+        if (!document.hidden) return; // only when page not active
+        if (!message) return;
+        const fromUser = sender || (message.user || message.from);
+        if (!fromUser || fromUser === username) return; // don't notify for own messages
+
+        const now = Date.now();
+        if (now - lastNotificationMs < NOTIFICATION_COOLDOWN_MS) return;
+        lastNotificationMs = now;
+
+        const body = (message.text && String(message.text).trim()) ? message.text.trim() : (message.image ? 'Image received' : 'New message');
+        new Notification('New message', { body });
+      } catch (e) {
+        // silent
+      }
     }
 
     // Create and connect socket using token from localStorage
@@ -610,10 +642,14 @@
       socket.on('chat message', function(message) {
         publicMessages.push(message);
         if (!selectedUser) renderMessages();
+        // Notify when message is from another user and page not focused
+        notifyIfNeeded(message, message.user);
       });
 
       socket.on('private message', function(message) {
         addPrivateMessage(message);
+        // Notify for private messages from others
+        notifyIfNeeded(message, message.from);
       });
 
       socket.on('user list', function(usersList) {
@@ -678,6 +714,10 @@
           // set username locally for UI (parse token)
           const d = parseJwt(json.token);
           if (d && d.username) username = d.username;
+          // if server returned avatar, you may want to store it (optional)
+          if (json.avatar) {
+            try { localStorage.setItem('avatar', json.avatar); } catch (e) {}
+          }
           // init socket with token
           createSocket();
           // hide auth UI, show chat UI
@@ -852,13 +892,25 @@
 
         row.className = 'message-row ' + (isMine ? 'mine' : 'other');
 
-        if (!isMine) {
-          const avatar = document.createElement('div');
-          avatar.className = 'message-avatar';
-          avatar.textContent = getAvatarLetter(senderName);
-          avatar.style.backgroundColor = getAvatarColor(senderName);
-          row.appendChild(avatar);
+        // Avatar element (image if available, otherwise letter avatar)
+        function createAvatarElement(name, avatarSrc) {
+          if (avatarSrc) {
+            const img = document.createElement('img');
+            img.className = 'message-avatar';
+            img.src = avatarSrc;
+            img.alt = name + ' avatar';
+            img.style.objectFit = 'cover';
+            return img;
+          } else {
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = getAvatarLetter(name);
+            avatar.style.backgroundColor = getAvatarColor(name);
+            return avatar;
+          }
         }
+
+        const avatarEl = createAvatarElement(senderName, message.avatar);
 
         const bubble = document.createElement('div');
         bubble.className = 'message-bubble ' + (message.private ? 'private' : '');
@@ -911,7 +963,15 @@
           setReply(message);
         });
 
-        row.appendChild(bubble);
+        // Place avatar before bubble for others, after bubble for mine
+        if (!isMine) {
+          row.appendChild(avatarEl);
+          row.appendChild(bubble);
+        } else {
+          row.appendChild(bubble);
+          row.appendChild(avatarEl);
+        }
+
         messagesList.appendChild(row);
       });
 
@@ -967,7 +1027,8 @@
         time: message.time,
         private: true,
         replyTo: message.replyTo || null,
-        image: message.image || null
+        image: message.image || null,
+        avatar: message.avatar || null
       });
 
       if (selectedUser === otherUser) renderMessages();

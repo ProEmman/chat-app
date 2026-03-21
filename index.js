@@ -27,10 +27,11 @@ const PORT = process.env.PORT || 3000;
 
 /* =========================
    🔐 REGISTER ROUTE
+   Accept optional avatar and save it
 ========================= */
 app.post("/register", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, avatar } = req.body;
 
     if (!username || !password) {
       return res.json({ message: "Username and password are required" });
@@ -46,7 +47,8 @@ app.post("/register", async (req, res) => {
 
     const newUser = new User({
       username,
-      password: hashedPassword
+      password: hashedPassword,
+      avatar: avatar || null
     });
 
     await newUser.save();
@@ -61,6 +63,7 @@ app.post("/register", async (req, res) => {
 
 /* =========================
    🔐 LOGIN ROUTE
+   Return avatar along with token
 ========================= */
 app.post("/login", async (req, res) => {
   try {
@@ -90,7 +93,8 @@ app.post("/login", async (req, res) => {
 
     res.json({
       message: "Login successful",
-      token
+      token,
+      avatar: user.avatar || null
     });
 
   } catch (error) {
@@ -103,12 +107,14 @@ app.post("/login", async (req, res) => {
    💬 CHAT SYSTEM (MongoDB-backed)
    - Clients must provide JWT in socket.handshake.auth.token
    - We verify token, extract decoded.username and assign to socket.username
+   - Load user record to get avatar and assign to socket.avatar
    - If token missing/invalid => disconnect socket
    - After successful auth emit chat history (from MongoDB) and user list
    - All message handlers are registered after auth succeeds
 ========================= */
 
 const users = {}; // username -> socket.id
+const lastSeen = {}; // username -> ISO timestamp when they went offline
 
 io.on('connection', (socket) => {
   // Expect token in socket.handshake.auth.token
@@ -134,8 +140,18 @@ io.on('connection', (socket) => {
     const username = decoded.username;
     socket.username = username;
 
+    // Load user to get avatar and other info
+    try {
+      const userDoc = await User.findOne({ username }).lean().exec();
+      socket.avatar = (userDoc && userDoc.avatar) ? userDoc.avatar : null;
+    } catch (e) {
+      socket.avatar = null;
+    }
+
     // Register/replace user mapping
     users[username] = socket.id;
+    // user is online now, clear any lastSeen
+    if (lastSeen[username]) delete lastSeen[username];
 
     // Fetch last 50 messages from MongoDB and send to client (oldest first)
     try {
@@ -147,8 +163,9 @@ io.on('connection', (socket) => {
       socket.emit('chat history', []);
     }
 
-    // Broadcast updated user list
+    // Broadcast updated user list (array of usernames) and lastSeen map
     io.emit('user list', Object.keys(users));
+    io.emit('user last seen', lastSeen);
 
     console.log(`${username} authenticated and connected (id=${socket.id})`);
 
@@ -174,7 +191,8 @@ io.on('connection', (socket) => {
         text,
         image,
         time,
-        replyTo
+        replyTo,
+        avatar: socket.avatar || null
       };
 
       const targetUser = data.targetUser && String(data.targetUser).trim();
@@ -208,13 +226,14 @@ io.on('connection', (socket) => {
         const saved = await newMessage.save();
         // Convert to plain object for emission
         const savedObj = saved.toObject();
-        // Broadcast public chat message (replyTo and image included)
+        // Broadcast public chat message (replyTo, image, avatar included)
         io.emit('chat message', {
           user: savedObj.user,
           text: savedObj.text,
           image: savedObj.image,
           time: savedObj.time,
-          replyTo: savedObj.replyTo
+          replyTo: savedObj.replyTo,
+          avatar: savedObj.avatar || null
         });
       } catch (saveErr) {
         console.error('Failed to save message:', saveErr);
@@ -229,7 +248,14 @@ io.on('connection', (socket) => {
         if (users[socket.username] === socket.id) {
           delete users[socket.username];
         }
+        // record last seen timestamp
+        const when = new Date().toISOString();
+        lastSeen[socket.username] = when;
+
+        // Broadcast updated user list and the lastSeen info
         io.emit('user list', Object.keys(users));
+        io.emit('user last seen', { [socket.username]: when });
+
         console.log(`${socket.username} disconnected (id=${socket.id})`);
       } else {
         console.log('Unauthenticated socket disconnected:', socket.id);
