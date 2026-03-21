@@ -405,23 +405,29 @@
   </style>
 </head>
 <body>
-  <div id="joinScreen" class="join-screen d-flex align-items-center justify-content-center p-3">
+  <!-- AUTH SCREEN (login / register) -->
+  <div id="authScreen" class="join-screen d-flex align-items-center justify-content-center p-3">
     <div class="card join-card">
       <div class="card-body p-4 p-sm-5">
-        <h1 class="h3 fw-bold mb-2">Join Chat</h1>
-        <p class="text-secondary mb-4">Enter your username to start chatting.</p>
-        <input
-          id="joinUsername"
-          type="text"
-          class="form-control form-control-lg mb-3"
-          placeholder="Enter your username"
-          autocomplete="off"
-        />
-        <button id="joinButton" type="button" class="btn btn-success btn-lg w-100">Join</button>
+        <h1 id="authTitle" class="h3 fw-bold mb-2">Login</h1>
+        <p id="authSubtitle" class="text-secondary mb-3">Sign in or register to join the chat.</p>
+
+        <div class="mb-2">
+          <input id="authUsername" type="text" class="form-control form-control-lg mb-2" placeholder="Username" autocomplete="off" />
+          <input id="authPassword" type="password" class="form-control form-control-lg" placeholder="Password" autocomplete="off" />
+        </div>
+
+        <div class="d-grid gap-2 mt-3">
+          <button id="authPrimary" type="button" class="btn btn-success btn-lg">Login</button>
+          <button id="authSecondary" type="button" class="btn btn-outline-secondary btn-lg">Switch to Register</button>
+        </div>
+
+        <div id="authMessage" class="small text-center text-danger mt-3" style="min-height:1.2em;"></div>
       </div>
     </div>
   </div>
 
+  <!-- CHAT APP (hidden until authenticated) -->
   <div id="chatApp" class="chat-app">
     <aside class="sidebar-panel d-none d-lg-flex flex-column">
       <div class="sidebar-top p-3">
@@ -517,17 +523,211 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    // Create socket once so reconnects reuse the same socket and handlers
-    const socket = io(); // reconnection enabled by default
+    // Helper: parse JWT payload to get username locally (used for "You" labeling)
+    function parseJwt(token) {
+      try {
+        const payload = token.split('.')[1];
+        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+        const json = decodeURIComponent(atob(base64).split('').map(c => {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(json);
+      } catch (e) {
+        return null;
+      }
+    }
 
+    // App state
+    let socket = null;
     let username = '';
     let selectedUser = '';
     let publicMessages = [];
     const privateMessages = {};
     let replyToMessage = null;
-
-    // base64 image data for pending send (cleared after send)
     let pendingImageBase64 = null;
+
+    // UI refs
+    const authScreen = document.getElementById('authScreen');
+    const authTitle = document.getElementById('authTitle');
+    const authSubtitle = document.getElementById('authSubtitle');
+    const authUsername = document.getElementById('authUsername');
+    const authPassword = document.getElementById('authPassword');
+    const authPrimary = document.getElementById('authPrimary');
+    const authSecondary = document.getElementById('authSecondary');
+    const authMessage = document.getElementById('authMessage');
+
+    // Toggle state: "login" or "register"
+    let authMode = 'login';
+
+    function showAuthMessage(msg, isError = true) {
+      authMessage.textContent = msg || '';
+      authMessage.style.color = isError ? '#dc3545' : '#198754';
+      if (!msg) authMessage.style.minHeight = '1.2em';
+    }
+
+    // Create and connect socket using token from localStorage
+    function createSocket() {
+      const token = localStorage.getItem('token');
+      if (!token) return null;
+
+      // initialize socket with token from localStorage
+      socket = io({
+        auth: { token: token }
+      });
+
+      // Register event handlers (same logic as before)
+      socket.on('connect', () => {
+        try {
+          if (!username) {
+            const d = parseJwt(token);
+            if (d && d.username) username = d.username;
+          }
+        } catch (e) {}
+
+        // Show chat UI on successful connect
+        authScreen.style.display = 'none';
+        document.getElementById('chatApp').classList.add('active');
+        const inputEl = document.getElementById('input');
+        if (inputEl) inputEl.focus();
+        updateActiveChatUI();
+      });
+
+      socket.on('auth error', (msg) => {
+        // token invalid/expired - remove and show auth
+        showAuthMessage(msg || 'Authentication failed');
+        try { localStorage.removeItem('token'); } catch (e) {}
+        if (socket) socket.disconnect();
+        socket = null;
+        document.getElementById('chatApp').classList.remove('active');
+        authScreen.style.display = 'flex';
+      });
+
+      socket.on('chat history', function(history) {
+        publicMessages = Array.isArray(history) ? history : [];
+        if (!selectedUser) renderMessages();
+      });
+
+      socket.on('chat message', function(message) {
+        publicMessages.push(message);
+        if (!selectedUser) renderMessages();
+      });
+
+      socket.on('private message', function(message) {
+        addPrivateMessage(message);
+      });
+
+      socket.on('user list', function(usersList) {
+        const stillOnline = usersList.indexOf(selectedUser) !== -1;
+        if (selectedUser && !stillOnline) selectedUser = '';
+        renderUserList(usersList);
+        renderMessages();
+      });
+
+      socket.on('chat error', function(message) {
+        alert(message);
+      });
+
+      socket.on('disconnect', (reason) => {
+        // If disconnected due to auth or server-side, show auth screen
+        if (reason === 'io server disconnect' || reason === 'io client disconnect') {
+          // do not auto show auth on intentional client disconnect
+        }
+      });
+
+      return socket;
+    }
+
+    // AUTH actions
+    async function doRegister() {
+      const u = authUsername.value.trim();
+      const p = authPassword.value;
+      if (!u || !p) {
+        showAuthMessage('Provide username and password');
+        return;
+      }
+      try {
+        const res = await fetch('/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p })
+        });
+        const json = await res.json();
+        showAuthMessage(json.message || 'Registered', false);
+      } catch (e) {
+        showAuthMessage('Registration failed');
+      }
+    }
+
+    async function doLogin() {
+      const u = authUsername.value.trim();
+      const p = authPassword.value;
+      if (!u || !p) {
+        showAuthMessage('Provide username and password');
+        return;
+      }
+      try {
+        const res = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p })
+        });
+        const json = await res.json();
+        if (json && json.token) {
+          localStorage.setItem('token', json.token);
+          authMessage.textContent = '';
+          // set username locally for UI (parse token)
+          const d = parseJwt(json.token);
+          if (d && d.username) username = d.username;
+          // init socket with token
+          createSocket();
+          // hide auth UI, show chat UI
+          authScreen.style.display = 'none';
+          document.getElementById('chatApp').classList.add('active');
+          updateActiveChatUI();
+        } else {
+          showAuthMessage(json.message || 'Login failed');
+        }
+      } catch (e) {
+        showAuthMessage('Login error');
+      }
+    }
+
+    // Toggle auth mode
+    authSecondary.addEventListener('click', function() {
+      if (authMode === 'login') {
+        authMode = 'register';
+        authTitle.textContent = 'Register';
+        authPrimary.textContent = 'Register';
+        authSecondary.textContent = 'Switch to Login';
+        authSubtitle.textContent = 'Create an account to join the chat.';
+        showAuthMessage('');
+      } else {
+        authMode = 'login';
+        authTitle.textContent = 'Login';
+        authPrimary.textContent = 'Login';
+        authSecondary.textContent = 'Switch to Register';
+        authSubtitle.textContent = 'Sign in or register to join the chat.';
+        showAuthMessage('');
+      }
+    });
+
+    authPrimary.addEventListener('click', function() {
+      if (authMode === 'login') {
+        doLogin();
+      } else {
+        doRegister();
+      }
+    });
+
+    authPassword.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        if (authMode === 'login') doLogin(); else doRegister();
+      }
+    });
+
+    // -----------------------
+    // Existing chat code (unchanged logic) - helpers & rendering
+    // -----------------------
 
     function formatTime(date) {
       return date.toLocaleTimeString([], {
@@ -773,87 +973,6 @@
       if (selectedUser === otherUser) renderMessages();
     }
 
-    // ---- Socket handlers (registered once) ----
-    socket.on('chat history', function(history) {
-      publicMessages = Array.isArray(history) ? history : [];
-      if (!selectedUser) renderMessages();
-    });
-
-    socket.on('chat message', function(message) {
-      publicMessages.push(message);
-      if (!selectedUser) renderMessages();
-    });
-
-    socket.on('private message', function(message) {
-      addPrivateMessage(message);
-    });
-
-    socket.on('user list', function(usersList) {
-      const stillOnline = usersList.indexOf(selectedUser) !== -1;
-      if (selectedUser && !stillOnline) selectedUser = '';
-      renderUserList(usersList);
-      renderMessages();
-    });
-
-    socket.on('chat error', function(message) {
-      alert(message);
-    });
-
-    socket.on('join error', function(message) {
-      alert(message);
-      try { localStorage.removeItem('username'); } catch (e) {}
-      // show join UI again
-      document.getElementById('joinScreen').style.display = 'flex';
-      document.getElementById('chatApp').classList.remove('active');
-      username = '';
-    });
-
-    // When socket connects (first connect and reconnects), re-emit 'join' if we have a saved username.
-    socket.on('connect', () => {
-      try {
-        const saved = localStorage.getItem('username');
-        if (saved && !username) {
-          // if page loaded and saved username exists, auto-join on connect
-          username = saved;
-          socket.emit('join', username);
-          document.getElementById('joinScreen').style.display = 'none';
-          document.getElementById('chatApp').classList.add('active');
-          document.getElementById('input').focus();
-          updateActiveChatUI();
-          return;
-        }
-      } catch (e) {}
-
-      // If username already set in this session, re-join after reconnection
-      if (username) {
-        socket.emit('join', username);
-      }
-    });
-
-    // ---- UI behavior ----
-    function joinChat() {
-      const joinInput = document.getElementById('joinUsername');
-      const enteredUsername = joinInput.value.trim();
-      if (!enteredUsername) {
-        alert('Please enter a username.');
-        joinInput.focus();
-        return;
-      }
-
-      username = enteredUsername;
-
-      // Persist username so returning users rejoin automatically
-      try { localStorage.setItem('username', username); } catch (e) {}
-
-      // Emit join; socket is already connected or will reconnect and emit again on connect
-      socket.emit('join', username);
-
-      document.getElementById('joinScreen').style.display = 'none';
-      document.getElementById('chatApp').classList.add('active');
-      document.getElementById('input').focus();
-      updateActiveChatUI();
-    }
-
     // Image selection
     document.getElementById('imageButton').addEventListener('click', function() {
       document.getElementById('imageInput').click();
@@ -877,12 +996,16 @@
       reader.readAsDataURL(file);
     });
 
+    // Send message (uses socket variable created after login)
     function sendMessage() {
       const input = document.getElementById('input');
       const text = input.value.trim();
 
       if (!text && !pendingImageBase64) return;
-      if (!socket) return;
+      if (!socket) {
+        alert('Not connected. Please log in.');
+        return;
+      }
 
       socket.emit('chat message', {
         text: text,
@@ -915,15 +1038,6 @@
       if (drawer) drawer.hide();
     }
 
-    document.getElementById('joinButton').addEventListener('click', joinChat);
-
-    document.getElementById('joinUsername').addEventListener('keydown', function(event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        joinChat();
-      }
-    });
-
     document.getElementById('publicChatButton').addEventListener('click', switchToPublicChat);
     document.getElementById('publicChatButtonMobile').addEventListener('click', switchToPublicChat);
 
@@ -936,19 +1050,19 @@
       sendMessage();
     });
 
-    // On initial page load, if a username exists in localStorage, pre-fill and set session username.
-    (function tryAutoJoin() {
-      try {
-        const saved = localStorage.getItem('username');
-        if (saved) {
-          document.getElementById('joinUsername').value = saved;
-          // Show chat UI immediately; actual join will happen when socket connects (connect handler)
-          document.getElementById('joinScreen').style.display = 'none';
-          document.getElementById('chatApp').classList.add('active');
-          username = saved;
-          updateActiveChatUI();
-        }
-      } catch (e) {}
+    // On load: if token exists try to connect automatically
+    (function autoConnectIfToken() {
+      const token = localStorage.getItem('token');
+      if (token) {
+        // pre-fill username from token for UI
+        const d = parseJwt(token);
+        if (d && d.username) username = d.username;
+        createSocket();
+      } else {
+        // show auth screen
+        authScreen.style.display = 'flex';
+        document.getElementById('chatApp').classList.remove('active');
+      }
     })();
   </script>
 </body>
