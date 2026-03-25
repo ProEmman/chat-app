@@ -126,6 +126,7 @@ app.post("/login", async (req, res) => {
 
 const users = {}; // username -> socket.id
 const lastSeen = {}; // username -> ISO timestamp when they went offline
+let allUsers = []; // all users in the chat
 
 io.on('connection', (socket) => {
   // Expect token in socket.handshake.auth.token
@@ -307,9 +308,54 @@ io.on('connection', (socket) => {
         console.log('Unauthenticated socket disconnected:', socket.id);
       }
     });
+
+    // ---- All users list ----
+    socket.on('all users', function(users) {
+      allUsers = Array.isArray(users) ? users : [];
+    });
   });
 });
 
 server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+
+function renderUserList(users) {
+  const desktopList = document.getElementById('onlineList');
+  const mobileList = document.getElementById('onlineListMobile');
+  desktopList.innerHTML = '';
+  mobileList.innerHTML = '';
+
+  const usersToRender = Array.isArray(allUsers) && allUsers.length ? allUsers : (Array.isArray(users) ? users : []);
+  const onlineSet = new Set(Array.isArray(onlineUsers) ? onlineUsers : []);
+
+  usersToRender.forEach(function(name) {
+    if (name === username) return;
+
+    const btn = createUserButton(name);
+    const smallEl = btn.querySelector('.small.text-secondary');
+    if (smallEl) {
+      smallEl.textContent = onlineSet.has(name) ? '🟢 Online' : '⚫ Offline';
+    } else {
+      const statusDiv = document.createElement('div');
+      statusDiv.className = 'small text-secondary';
+      statusDiv.textContent = onlineSet.has(name) ? '🟢 Online' : '⚫ Offline';
+      btn.appendChild(statusDiv);
+    }
+    desktopList.appendChild(btn);
+
+    const btnMobile = createUserButton(name);
+    const smallElMobile = btnMobile.querySelector('.small.text-secondary');
+    if (smallElMobile) {
+      smallElMobile.textContent = onlineSet.has(name) ? '🟢 Online' : '⚫ Offline';
+    } else {
+      const statusDivMobile = document.createElement('div');
+      statusDivMobile.className = 'small text-secondary';
+      statusDivMobile.textContent = onlineSet.has(name) ? '🟢 Online' : '⚫ Offline';
+      btnMobile.appendChild(statusDivMobile);
+    }
+    mobileList.appendChild(btnMobile);
+  });
+
+  updateActiveChatUI();
+}
