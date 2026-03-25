@@ -1,10 +1,5 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
-
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log(err));
-
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -14,14 +9,38 @@ const jwt = require("jsonwebtoken");
 const User = require("./models/User");
 const Message = require("./models/Message");
 
+const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
+
+if (!MONGO_URI) {
+  console.error("Missing MONGO_URI environment variable");
+}
+
+if (!process.env.JWT_SECRET) {
+  console.warn("JWT_SECRET is not set. Falling back to the local development secret.");
+}
+
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.error("MongoDB connection error:", err));
+
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB runtime error:", err);
+});
+
 const app = express();
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server);
+const publicDir = path.join(__dirname, "public");
 
-// Serve static frontend files
-app.use(express.static(path.join(__dirname)));
+// Serve frontend files from /public only
+app.use(express.static(publicDir));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -85,7 +104,7 @@ app.post("/login", async (req, res) => {
 
     const token = jwt.sign(
       { username: user.username },
-      "secretkey",
+      JWT_SECRET,
       { expiresIn: "1h" }
     );
 
@@ -120,7 +139,7 @@ io.on('connection', (socket) => {
   }
 
   // Verify token and set up handlers only on success
-  jwt.verify(token, "secretkey", async (err, decoded) => {
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err || !decoded || !decoded.username) {
       console.log('Invalid token for socket, disconnecting:', socket.id, err && err.message);
       socket.emit('auth error', 'Invalid token');
