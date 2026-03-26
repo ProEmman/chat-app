@@ -542,6 +542,8 @@
     let username = '';
     let selectedUser = '';
     let publicMessages = [];
+    let allUsers = [];
+    let onlineUsers = [];
     const privateMessages = {};
     let replyToMessage = null;
     let pendingImageBase64 = null;
@@ -667,10 +669,17 @@
         notifyIfNeeded(message, message.from);
       });
 
+      socket.on('all users', function(users) {
+        allUsers = Array.isArray(users) ? users : [];
+        console.log('ALL USERS:', allUsers);
+        renderUserList();
+      });
+
       socket.on('user list', function(usersList) {
-        const stillOnline = usersList.indexOf(selectedUser) !== -1;
+        onlineUsers = Array.isArray(usersList) ? usersList : [];
+        const stillOnline = onlineUsers.indexOf(selectedUser) !== -1;
         if (selectedUser && !stillOnline) selectedUser = '';
-        renderUserList(usersList);
+        renderUserList();
         renderMessages();
       });
 
@@ -752,8 +761,6 @@
           }
           // init socket with token
           createSocket();
-          // attach private/user-list handlers
-          attachSocketHandlers();
           // hide auth UI, show chat UI
           authScreen.style.display = 'none';
           document.getElementById('chatApp').classList.add('active');
@@ -1045,19 +1052,38 @@
       return button;
     }
 
-    function renderUserList(users) {
-      const desktopList = document.getElementById('onlineList');
-      const mobileList = document.getElementById('onlineListMobile');
-      desktopList.innerHTML = '';
-      mobileList.innerHTML = '';
+    function renderUserList() {
+      const list = document.getElementById("onlineList");
+      list.innerHTML = "";
 
-      users.forEach(function(name) {
-        if (name === username) return;
-        desktopList.appendChild(createUserButton(name));
-        mobileList.appendChild(createUserButton(name));
+      if (!allUsers || allUsers.length === 0) return;
+
+      allUsers.forEach(user => {
+        if (!user.username) return;
+        if (user.username === username) return;
+
+        const isOnline = onlineUsers.includes(user.username);
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "user-item btn text-start p-3";
+
+        button.innerHTML = `
+          <div class="fw-semibold">${user.username}</div>
+          <div class="small" style="color:${isOnline ? 'green' : 'gray'}">
+            ${isOnline ? '🟢 Online' : '⚫ Offline'}
+          </div>
+        `;
+
+        button.addEventListener("click", function() {
+          selectedUser = user.username;
+          clearReply();
+          updateActiveChatUI();
+          renderMessages();
+        });
+
+        list.appendChild(button);
       });
-
-      updateActiveChatUI();
     }
 
     function addPrivateMessage(message) {
@@ -1320,8 +1346,6 @@
         const d = parseJwt(token);
         if (d && d.username) username = d.username;
         createSocket();
-        // attach private/user-list handlers (if socket created)
-        attachSocketHandlers();
       } else {
         // show auth screen
         authScreen.style.display = 'flex';

@@ -152,6 +152,14 @@ io.on('connection', (socket) => {
     const username = decoded.username;
     socket.username = username;
 
+    try {
+      const allUsers = await User.find({}, 'username').lean();
+      socket.emit('all users', allUsers);
+      console.log('Sent all users:', allUsers);
+    } catch (err) {
+      console.error('Error fetching users:', err);
+    }
+
     // Load user to get avatar and other info
     try {
       const userDoc = await User.findOne({ username }).lean().exec();
