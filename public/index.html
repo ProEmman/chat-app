@@ -544,6 +544,7 @@
     let publicMessages = [];
     let allUsers = [];
     let onlineUsers = [];
+    let unreadCounts = {};
     const privateMessages = {};
     let replyToMessage = null;
     let pendingImageBase64 = null;
@@ -664,7 +665,17 @@
       });
 
       socket.on('private message', function(message) {
+        const fromUser = message.from;
+
+        if (fromUser && fromUser !== username && selectedUser !== fromUser) {
+          if (!unreadCounts[fromUser]) {
+            unreadCounts[fromUser] = 0;
+          }
+          unreadCounts[fromUser]++;
+        }
+
         addPrivateMessage(message);
+        renderUserList();
         // Notify for private messages from others
         notifyIfNeeded(message, message.from);
       });
@@ -1026,23 +1037,31 @@
       scrollToBottom();
     }
 
-    function createUserButton(name) {
+    function createUserButton(name, isOnline, count) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'user-item btn text-start p-3';
       button.dataset.username = name;
-      button.innerHTML =
-        '<div class="fw-semibold">' + name + '</div>' +
-        '<div class="small text-secondary">Private chat</div>';
+      button.innerHTML = `
+        <div class="fw-semibold">
+          ${name}
+          ${count > 0 ? `<span class="badge bg-danger ms-2">${count}</span>` : ""}
+        </div>
+        <div class="small" style="color:${isOnline ? 'green' : 'gray'}">
+          ${isOnline ? '🟢 Online' : '⚫ Offline'}
+        </div>
+      `;
 
       // Highlight if currently selected
       if (name === selectedUser) button.classList.add('active');
 
       button.addEventListener('click', function() {
         selectedUser = name;
+        unreadCounts[name] = 0;
         clearReply();
         updateActiveChatUI();
         renderMessages();
+        renderUserList();
 
         const drawerElement = document.getElementById('usersDrawer');
         const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
@@ -1065,41 +1084,10 @@
         if (user.username === username) return;
 
         const isOnline = onlineUsers.includes(user.username);
+        const count = unreadCounts[user.username] || 0;
 
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "user-item btn text-start p-3";
-
-        button.innerHTML = `
-          <div class="fw-semibold">${user.username}</div>
-          <div class="small" style="color:${isOnline ? 'green' : 'gray'}">
-            ${isOnline ? '🟢 Online' : '⚫ Offline'}
-          </div>
-        `;
-
-        button.addEventListener("click", function() {
-          selectedUser = user.username;
-          clearReply();
-          updateActiveChatUI();
-          renderMessages();
-
-          const drawerElement = document.getElementById('usersDrawer');
-          const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
-          if (drawer) drawer.hide();
-        });
-
-        desktopList.appendChild(button);
-        mobileList.appendChild(button.cloneNode(true));
-        mobileList.lastChild.addEventListener("click", function() {
-          selectedUser = user.username;
-          clearReply();
-          updateActiveChatUI();
-          renderMessages();
-
-          const drawerElement = document.getElementById('usersDrawer');
-          const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
-          if (drawer) drawer.hide();
-        });
+        desktopList.appendChild(createUserButton(user.username, isOnline, count));
+        mobileList.appendChild(createUserButton(user.username, isOnline, count));
       });
     }
 
@@ -1125,20 +1113,6 @@
 
     // ---- Socket handlers (registered once) ----
     socket && socket.on && (function attach() {
-      // existing handlers...
-      socket.on('private message', function(message) {
-        addPrivateMessage(message);
-        renderMessages();
-        // If the message is from another user, notify server that it's seen
-        try {
-          const fromUser = message.from;
-          if (fromUser && fromUser !== username && message._id) {
-            socket.emit('message seen', message._id);
-          }
-        } catch (e) {}
-        notifyIfNeeded(message, message.from);
-      });
-
       // Update seen status when server notifies sender
       socket.on('message seen update', function(messageId) {
         try {
