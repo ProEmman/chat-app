@@ -1053,8 +1053,10 @@
     }
 
     function renderUserList() {
-      const list = document.getElementById("onlineList");
-      list.innerHTML = "";
+      const desktopList = document.getElementById("onlineList");
+      const mobileList = document.getElementById("onlineListMobile");
+      desktopList.innerHTML = "";
+      mobileList.innerHTML = "";
 
       if (!allUsers || allUsers.length === 0) return;
 
@@ -1080,9 +1082,24 @@
           clearReply();
           updateActiveChatUI();
           renderMessages();
+
+          const drawerElement = document.getElementById('usersDrawer');
+          const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
+          if (drawer) drawer.hide();
         });
 
-        list.appendChild(button);
+        desktopList.appendChild(button);
+        mobileList.appendChild(button.cloneNode(true));
+        mobileList.lastChild.addEventListener("click", function() {
+          selectedUser = user.username;
+          clearReply();
+          updateActiveChatUI();
+          renderMessages();
+
+          const drawerElement = document.getElementById('usersDrawer');
+          const drawer = bootstrap.Offcanvas.getInstance(drawerElement);
+          if (drawer) drawer.hide();
+        });
       });
     }
 
